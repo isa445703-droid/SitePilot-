@@ -74,6 +74,13 @@ npm run db:start          # initdb + create DB + start, idempotent
 
 To use your own PostgreSQL, simply set `DATABASE_URL` — `db:start` is then optional.
 
+> **Timezone gotcha.** Prisma treats `timestamp` columns as UTC, but the bundled
+> cluster keeps the OS timezone (`Europe/Moscow` here), so a raw
+> `now() - interval '…'` written through psql/`pg` lands *hours ahead* of what
+> the app reads — a stale-row query will silently match nothing. Always write
+> `(now() AT TIME ZONE 'utc')` for timestamps in ad-hoc SQL. The application
+> itself only writes through Prisma, so it is unaffected.
+
 ### Migrations & seed
 
 ```powershell
@@ -199,6 +206,14 @@ history scoped to one site.
   (`schedulerTick`) dispatches due tasks through the orchestrator pipeline:
   research → writer → editor → seo → publisher.
 * Manual mode cancels queued generation tasks and disables the schedule.
+* The loop is booted by `src/instrumentation.ts` → `instrumentation.node.ts`.
+  This indirection is required: Next.js only ever resolves a file named
+  `instrumentation.<ext>`, so the `.node` file on its own is never loaded and
+  nothing would run. Set `DISABLE_SCHEDULER=1` to opt out, or drive ticks from
+  outside with `POST /api/cron`.
+* Every tick first recovers tasks that stalled in `RUNNING` (requeued until
+  `MAX_TASK_ATTEMPTS`, then failed) and drops expired sessions, then dispatches
+  due tasks.
 
 ## 9. Internationalisation & theming
 
