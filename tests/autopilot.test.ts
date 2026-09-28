@@ -148,6 +148,94 @@ describe("autopilot task creation", () => {
   });
 });
 
+describe("autopilot queue race", () => {
+  /** A client that runs the locked body on a transaction-scoped stub. */
+  function lockedClient(
+    scoped: Record<string, unknown>,
+    outer: ReturnType<typeof makeClient>["client"],
+  ) {
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(scoped));
+    return { client: { ...outer, $transaction } as never, $transaction };
+  }
+
+  it("locks the site row before the count+create pair", async () => {
+    const { client, calls } = makeClient();
+    const count = vi.fn(async () => 0);
+    const create = vi.fn(async () => ({ id: "task_locked" }));
+    const scheduleUpdate = vi.fn(async () => ({}));
+    const queryRaw = vi.fn((..._args: unknown[]) => Promise.resolve([]));
+
+    const { client: txClient } = lockedClient(
+      {
+        agentTask: { count, create, findFirst: vi.fn(async () => null) },
+        publishingSchedule: { update: scheduleUpdate },
+        $queryRaw: queryRaw,
+      },
+      client,
+    );
+
+    const result = await scheduleNextPublication("site_1", txClient);
+
+    expect(result?.taskId).toBe("task_locked");
+    expect(result?.runAt).toBeInstanceOf(Date);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const [, siteArg] = queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, string];
+    expect(siteArg).toBe("site_1");
+
+    // The guarded check ran inside the transaction, not on the outer client.
+    expect(calls.count).not.toHaveBeenCalled();
+    expect(count).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(scheduleUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { nextRunAt: expect.any(Date) } }),
+    );
+  });
+
+  it("queues nothing when the locked check sees another runner's task", async () => {
+    const { client } = makeClient();
+    const create = vi.fn(async () => ({ id: "should_not_happen" }));
+    const scheduleUpdate = vi.fn(async () => ({}));
+
+    const { client: txClient } = lockedClient(
+      {
+        agentTask: { count: vi.fn(async () => 1), create, findFirst: vi.fn(async () => null) },
+        publishingSchedule: { update: scheduleUpdate },
+        $queryRaw: vi.fn((..._args: unknown[]) => Promise.resolve([])),
+      },
+      client,
+    );
+
+    expect(await scheduleNextPublication("site_1", txClient)).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    expect(scheduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("enables autopilot under the same lock", async () => {
+    const { client, calls } = makeClient();
+    const findFirst = vi.fn(async () => null);
+    const create = vi.fn(async () => ({ id: "task_from_lock" }));
+    const queryRaw = vi.fn((..._args: unknown[]) => Promise.resolve([]));
+
+    const { client: txClient } = lockedClient(
+      {
+        agentTask: { findFirst, create, count: vi.fn(async () => 0) },
+        publishingSchedule: { update: vi.fn(async () => ({})) },
+        $queryRaw: queryRaw,
+      },
+      client,
+    );
+
+    const result = await enableAutopilot("site_1", "FULL", txClient);
+
+    expect(result.taskId).toBe("task_from_lock");
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(calls.findFirst).not.toHaveBeenCalled();
+    expect(calls.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("schedule maths", () => {
   it("maps frequency to articles per week", () => {
     expect(articlesPerWeek("ONCE_A_WEEK")).toBe(1);

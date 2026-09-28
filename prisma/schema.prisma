@@ -426,6 +426,9 @@ model AgentTask {
 
   @@index([status, scheduledAt])
   @@index([siteId, createdAt])
+  // Queue lookups (count/find the pending task of one site) hit this shape on
+  // every tick and every autopilot switch.
+  @@index([siteId, type, status])
 }
 
 enum RunStatus {

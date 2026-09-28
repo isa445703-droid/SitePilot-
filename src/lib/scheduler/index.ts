@@ -150,7 +150,39 @@ export type SchedulerClient = {
     update: (args: any) => Promise<any>;
     updateMany: (args: any) => Promise<{ count: number }>;
   };
+  /**
+   * Present on the real Prisma client, absent on the hermetic test stubs —
+   * used to make the queue's "is it empty?" + "create" pair atomic.
+   */
+  $transaction?: <T>(fn: (tx: SchedulerClient) => Promise<T>) => Promise<T>;
+  $queryRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 };
+
+/**
+ * Serialises the queue check and the create it guards, per site.
+ *
+ * A scheduler tick and an API-triggered run could both count zero pending
+ * `GENERATE_ARTICLE` tasks and both queue the autopilot's next article. Taking a
+ * row lock on the site for the length of the transaction makes the pair atomic:
+ * the loser of the race waits, then sees the task the winner just created.
+ *
+ * Clients without `$transaction` (the test stubs) simply run the body inline —
+ * they have no concurrency to lose a race to.
+ */
+async function withSiteQueueLock<T>(
+  client: SchedulerClient,
+  siteId: string,
+  body: (scoped: SchedulerClient) => Promise<T>,
+): Promise<T> {
+  if (typeof client.$transaction !== "function") return body(client);
+  return client.$transaction(async (scoped) => {
+    if (typeof scoped.$queryRaw === "function") {
+      // Held until commit — see the comment above.
+      await scoped.$queryRaw`SELECT id FROM "Site" WHERE id = ${siteId} FOR UPDATE`;
+    }
+    return body(scoped);
+  });
+}
 
 /* -------------------------------------------------------------------------- */
 /* Autopilot                                                                  */
@@ -212,12 +244,13 @@ export async function enableAutopilot(
   });
 
   // A real queued task proves the loop is running — MANUAL never gets one.
-  const existing = await client.agentTask.findFirst({
-    where: { siteId, type: "GENERATE_ARTICLE", status: "QUEUED" },
-  });
-  const task =
-    existing ??
-    (await client.agentTask.create({
+  // Checked under the site lock so a concurrent tick cannot queue a second one.
+  const task = await withSiteQueueLock(client, siteId, async (scoped) => {
+    const existing = await scoped.agentTask.findFirst({
+      where: { siteId, type: "GENERATE_ARTICLE", status: "QUEUED" },
+    });
+    if (existing) return existing;
+    return scoped.agentTask.create({
       data: {
         siteId,
         type: "GENERATE_ARTICLE",
@@ -231,7 +264,8 @@ export async function enableAutopilot(
           research: true,
         },
       },
-    }));
+    });
+  });
 
   return { mode, enabled: true, nextRunAt, taskId: task.id };
 }
@@ -288,33 +322,40 @@ export async function scheduleNextPublication(
   });
   if (!site?.schedule?.enabled || site.autopilot === "MANUAL") return null;
 
-  const queued = await client.agentTask.count({
-    where: { siteId, type: "GENERATE_ARTICLE", status: { in: ["QUEUED", "RUNNING"] } },
-  });
-  if (queued > 0) return null;
-
   const frequency = (site.schedule.frequency ?? site.frequency) as PublishingFrequency;
   const runAt = computeNextRun(frequency, {
     hour: site.schedule.publishHour ?? site.publishHour ?? 9,
     timezone: nextValidTimezone(site.schedule.timezone ?? site.timezone),
   });
 
-  const task = await client.agentTask.create({
-    data: {
-      siteId,
-      type: "GENERATE_ARTICLE",
-      status: "QUEUED",
-      scheduledAt: runAt,
-      priority: 50,
-      input: { title: pickNextTitle(site), category: "", keywords: [], research: true },
-    },
+  // Count + create must be atomic, otherwise two runners each queue the next
+  // autopilot article and the site silently publishes twice as often.
+  const task = await withSiteQueueLock(client, siteId, async (scoped) => {
+    const queued = await scoped.agentTask.count({
+      where: { siteId, type: "GENERATE_ARTICLE", status: { in: ["QUEUED", "RUNNING"] } },
+    });
+    if (queued > 0) return null;
+
+    const created = await scoped.agentTask.create({
+      data: {
+        siteId,
+        type: "GENERATE_ARTICLE",
+        status: "QUEUED",
+        scheduledAt: runAt,
+        priority: 50,
+        input: { title: pickNextTitle(site), category: "", keywords: [], research: true },
+      },
+    });
+
+    await scoped.publishingSchedule.update({
+      where: { siteId },
+      data: { nextRunAt: runAt },
+    });
+
+    return created;
   });
 
-  await client.publishingSchedule.update({
-    where: { siteId },
-    data: { nextRunAt: runAt },
-  });
-
+  if (!task) return null;
   return { taskId: task.id, runAt };
 }
 

@@ -232,6 +232,14 @@ history scoped to one site.
   Tick results report `ran / completed / failed / skipped`, where `skipped` is a
   claim lost to a concurrent runner — that is logged as `task_claim_miss`, never
   counted as a task failure.
+* Queueing the autopilot's next article is a *count-then-create* pair; two
+  runners (tick vs. an API-triggered run) could each see an empty queue and both
+  queue a task, silently doubling the publishing rate. The pair now runs inside
+  a transaction holding a `SELECT … FOR UPDATE` row lock on the site
+  (`withSiteQueueLock`), so the loser waits and then sees the winner's task.
+  This is deliberately a lock and not a unique index: `GENERATE_CONTENT_PLAN`
+  legitimately queues up to three article tasks at once, which a
+  one-pending-task-per-site index would reject.
 
 ## 9. Internationalisation & theming
 
@@ -261,6 +269,7 @@ npm test
 | `tests/instrumentation.test.ts`   | scheduler boots through the entry point Next.js actually loads |
 | `tests/scheduler-tick.test.ts`    | tick mutex (no overlapping ticks) and `ran/completed/failed/skipped` accounting |
 | `tests/task-claim.test.ts`        | atomic claim: a lost race is `skipped`, a vanished task is warned about |
+| `tests/autopilot.test.ts`         | autopilot creation, MANUAL cancellation, schedule maths, per-site queue lock |
 | `tests/site-ownership.test.ts`    | `getOwnedSite` access control (member / stranger / missing) |
 | `tests/autopilot.test.ts`         | autopilot task creation, MANUAL cancellation, schedule maths |
 | `tests/task-policy.test.ts`       | retry/backoff policy: attempt cap, transient vs permanent failures |
