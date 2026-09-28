@@ -374,11 +374,20 @@ export async function runDueTasks(limit = 5): Promise<TickResult> {
   // Dynamic import keeps the module graph acyclic (orchestrator imports us).
   const { runTask } = await import("@/lib/agents/orchestrator");
 
-  const due = await db.agentTask.findMany({
-    where: { status: "QUEUED", scheduledAt: { lte: new Date() } },
+  // Prisma cannot express `scheduledAt IS NULL` in a where clause, and a task
+  // without a schedule (manual insert, older row) would then sit in QUEUED
+  // forever. Fetch a slightly wider slice of the queue and apply the deadline
+  // here, treating a missing schedule as "run now".
+  const candidates = await db.agentTask.findMany({
+    where: { status: "QUEUED" },
     orderBy: [{ priority: "desc" }, { scheduledAt: "asc" }],
-    take: limit,
+    take: limit * 4,
   });
+
+  const now = Date.now();
+  const due = candidates
+    .filter((task) => !task.scheduledAt || task.scheduledAt.getTime() <= now)
+    .slice(0, limit);
 
   const result: TickResult = { ran: 0, completed: 0, failed: 0, skipped: 0 };
   for (const task of due) {

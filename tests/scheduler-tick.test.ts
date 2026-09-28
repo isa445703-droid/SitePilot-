@@ -99,4 +99,24 @@ describe("runDueTasks accounting", () => {
     await expect(runDueTasks()).resolves.toEqual({ ran: 0, completed: 0, failed: 0, skipped: 0 });
     expect(orchestratorRunTask).not.toHaveBeenCalled();
   });
+
+  it("picks up queued tasks that have no scheduledAt", async () => {
+    agentTask.findMany.mockResolvedValueOnce([{ id: "stuck" }]);
+    orchestratorRunTask.mockResolvedValueOnce({ taskId: "stuck", ok: true });
+
+    const result = await runDueTasks();
+
+    // Prisma cannot filter IS NULL, so the deadline is applied in JS: a task
+    // without a schedule counts as due instead of blocking the queue forever.
+    expect(agentTask.findMany.mock.calls.at(-1)?.[0]?.where).toEqual({ status: "QUEUED" });
+    expect(result).toEqual({ ran: 1, completed: 1, failed: 0, skipped: 0 });
+  });
+
+  it("leaves tasks scheduled for the future alone", async () => {
+    const future = new Date(Date.now() + 60_000);
+    agentTask.findMany.mockResolvedValueOnce([{ id: "later", scheduledAt: future }]);
+
+    await expect(runDueTasks()).resolves.toEqual({ ran: 0, completed: 0, failed: 0, skipped: 0 });
+    expect(orchestratorRunTask).not.toHaveBeenCalled();
+  });
 });
