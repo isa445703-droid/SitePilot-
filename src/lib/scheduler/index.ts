@@ -322,7 +322,11 @@ export async function scheduleNextPublication(
 /* Tick loop                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export type TickResult = { ran: number; completed: number; failed: number };
+/**
+ * `skipped` counts claims we lost to a concurrent runner — visible for
+ * diagnostics, but not a failure of this tick.
+ */
+export type TickResult = { ran: number; completed: number; failed: number; skipped: number };
 
 /** Runs every queued task whose scheduled time has passed. */
 export async function runDueTasks(limit = 5): Promise<TickResult> {
@@ -335,11 +339,12 @@ export async function runDueTasks(limit = 5): Promise<TickResult> {
     take: limit,
   });
 
-  const result: TickResult = { ran: 0, completed: 0, failed: 0 };
+  const result: TickResult = { ran: 0, completed: 0, failed: 0, skipped: 0 };
   for (const task of due) {
     result.ran++;
     const outcome = await runTask(task.id);
     if (outcome.ok) result.completed++;
+    else if (outcome.skipped) result.skipped++;
     else result.failed++;
   }
   return result;
@@ -415,16 +420,30 @@ async function purgeExpiredSessionsOnce(): Promise<void> {
 }
 
 export async function schedulerTick(): Promise<TickResult> {
+  // One tick at a time. Article generation takes 40-80s while the interval
+  // fires every 60s, so without this guard an in-flight tick raced the next one
+  // (double recovery work, tasks stolen mid-selection, a bogus `failed` count).
+  const g = globalThis as unknown as { __sitepilotTicking?: boolean };
+  if (g.__sitepilotTicking) {
+    logger.debug("scheduler_tick_skipped", { reason: "already_running" });
+    return { ran: 0, completed: 0, failed: 0, skipped: 0 };
+  }
+  g.__sitepilotTicking = true;
+
   try {
-    await recoverStuckTasks();
-    await purgeExpiredSessionsOnce();
-    await ensureSchedules();
-    const result = await runDueTasks();
-    if (result.ran > 0) logger.info("scheduler_tick", result as unknown as Record<string, unknown>);
-    return result;
-  } catch (error) {
-    logger.error("scheduler_tick_failed", { error: String(error) });
-    return { ran: 0, completed: 0, failed: 1 };
+    try {
+      await recoverStuckTasks();
+      await purgeExpiredSessionsOnce();
+      await ensureSchedules();
+      const result = await runDueTasks();
+      if (result.ran > 0) logger.info("scheduler_tick", result as unknown as Record<string, unknown>);
+      return result;
+    } catch (error) {
+      logger.error("scheduler_tick_failed", { error: String(error) });
+      return { ran: 0, completed: 0, failed: 1, skipped: 0 };
+    }
+  } finally {
+    g.__sitepilotTicking = false;
   }
 }
 

@@ -282,6 +282,9 @@ export async function researchTopic(input: {
     prompt: researchPrompt(input),
     demo: () => demoResearch(input.topic),
     model: aiConfig.fastModel,
+    // Research payloads run long — the default budget was cutting the JSON off
+    // mid-string, which then cost a full retry.
+    maxTokens: 6000,
   });
 }
 

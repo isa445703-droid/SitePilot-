@@ -258,6 +258,12 @@ export type TaskOutcome = {
   /** Set when the task was put back into the queue for another attempt. */
   willRetry?: boolean;
   attempts?: number;
+  /**
+   * Set when we lost the atomic claim to a concurrent runner (API-triggered run
+   * vs scheduler tick). Nothing went wrong, so callers must not count it as a
+   * failure — the other runner owns the task now.
+   */
+  skipped?: boolean;
 };
 
 /** Claims per task before it is failed for good. */
@@ -272,7 +278,10 @@ export { MAX_TASK_ATTEMPTS, isRetryableTaskError, retryDelayMs } from "./task-po
  */
 export async function runTask(taskId: string): Promise<TaskOutcome> {
   const task = await db.agentTask.findUnique({ where: { id: taskId } });
-  if (!task) return { taskId, ok: false, error: "Task not found" };
+  if (!task) {
+    logger.warn("task_missing", { taskId });
+    return { taskId, ok: false, error: "Task not found" };
+  }
 
   const claimed = await db.agentTask.updateMany({
     where: { id: taskId, status: "QUEUED" },
@@ -280,7 +289,11 @@ export async function runTask(taskId: string): Promise<TaskOutcome> {
   });
   if (claimed.count === 0) {
     const current = await db.agentTask.findUnique({ where: { id: taskId } });
-    return { taskId, ok: false, error: `Task is ${current?.status ?? "unknown"}` };
+    const status = current?.status ?? "unknown";
+    // Expected whenever a tick overlaps an API-triggered run: the claim is the
+    // guard, this is just the loser reporting in instead of failing the task.
+    logger.info("task_claim_miss", { taskId, status });
+    return { taskId, ok: false, skipped: true, error: `Task is ${status}` };
   }
 
   const attempts = (task.attempts ?? 0) + 1;

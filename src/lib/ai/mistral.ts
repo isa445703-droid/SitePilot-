@@ -2,6 +2,7 @@ import "server-only";
 import { aiConfig } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import type { z } from "zod";
+import { formatIssues, normalizeForSchema, parseJsonLoose } from "./repair";
 
 /**
  * Central Mistral AI service. Every model call in the application goes through
@@ -73,7 +74,7 @@ export function isAiConfigured(): boolean {
 const EMPTY_USAGE: AiUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
 type ChatResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -161,10 +162,34 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
   return { text, model, usage: readUsage(json) };
 }
 
+/** Default completion budget when the caller does not state one. */
+const DEFAULT_MAX_TOKENS = 3000;
+/** Hard ceiling for one completion (fits comfortably in the supported context). */
+const MAX_TOKEN_CAP = 16_000;
+/** Initial attempt + up to two follow-ups (larger budget / corrective retry). */
+const MAX_ATTEMPTS = 3;
+
+function correctivePrompt(base: string, error: string): string {
+  return `${base}\n\nYour previous answer was invalid: ${error}\nReturn corrected JSON only.`;
+}
+
 /**
  * Structured output generation: the model is asked for JSON, the JSON is
- * parsed and validated with Zod. One repair attempt is made when validation
- * fails. AI output is always treated as *data*, never as executable code.
+ * parsed and validated with Zod. AI output is always treated as *data*, never
+ * as executable code.
+ *
+ * Three failure modes are handled separately instead of all collapsing into
+ * one blind retry:
+ *
+ * - **Truncated completion** (`finish_reason === "length"`): the answer was cut
+ *   by the token budget. We ask again with a doubled budget rather than
+ *   "repairing" the JSON — closing the braces would validate a half-written
+ *   article and publish it.
+ * - **Malformed JSON**: lenient parsing (fences, prose, trailing commas,
+ *   unclosed structures) before giving up.
+ * - **Schema mismatch**: safe normalisation (shrink over-long strings/arrays,
+ *   unwrap `content: { text }`, coerce `"42"`) and only then a corrective
+ *   retry that feeds the exact Zod issues back to the model.
  */
 export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: {
   system: string;
@@ -180,17 +205,18 @@ export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: 
   const base = {
     model,
     temperature: options.temperature ?? 0.5,
-    max_tokens: options.maxTokens ?? 3000,
   };
 
+  let maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+  let prompt = options.prompt;
   let lastError = "";
   let usage: AiUsage = EMPTY_USAGE;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const prompt = attempt === 0 ? options.prompt : `${options.prompt}\n\nYour previous answer was invalid: ${lastError}\nReturn corrected JSON only.`;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const { json } = await chatCompletion(
       {
         ...base,
+        max_tokens: maxTokens,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: jsonSystem },
@@ -201,40 +227,61 @@ export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: 
     );
 
     usage = readUsage(json);
-    const raw = json.choices?.[0]?.message?.content?.trim() ?? "";
+    const choice = json.choices?.[0];
+    const raw = choice?.message?.content?.trim() ?? "";
+
+    if (choice?.finish_reason === "length") {
+      if (maxTokens < MAX_TOKEN_CAP) {
+        const previousMax = maxTokens;
+        lastError = `output truncated at ${previousMax} tokens`;
+        maxTokens = Math.min(maxTokens * 2, MAX_TOKEN_CAP);
+        logger.warn("ai_structured_truncated", { model, attempt, previousMax, max: maxTokens });
+        continue; // same prompt, more room
+      }
+      throw new AiResponseError(
+        `Structured output still truncated at ${maxTokens} tokens`,
+        "The AI response was cut off before it finished. Please retry.",
+      );
+    }
+
     if (!raw) {
       lastError = "empty response";
+      prompt = correctivePrompt(options.prompt, lastError);
       continue;
     }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stripFences(raw));
-    } catch (error) {
-      lastError = `not valid JSON (${String(error)})`.slice(0, 200);
+    const parsed = parseJsonLoose(raw, { closeUnbalanced: true });
+    if (!parsed.ok) {
+      lastError =
+        parsed.reason === "empty"
+          ? "empty response"
+          : `not valid JSON (starts with ${JSON.stringify(raw.slice(0, 80))})`;
+      logger.warn("ai_structured_parse_failed", { model, attempt, lastError });
+      prompt = correctivePrompt(options.prompt, lastError);
       continue;
     }
 
-    const result = options.schema.safeParse(parsed);
-    if (result.success) {
-      return { data: result.data, model: json.model ? String(json.model) : model, usage };
+    const normalized = normalizeForSchema(options.schema, parsed.value);
+    if (normalized.ok) {
+      if (normalized.fixes.length > 0) {
+        logger.warn("ai_structured_repaired", { model, attempt, fixes: normalized.fixes });
+      }
+      return { data: normalized.data, model: json.model ? String(json.model) : model, usage };
     }
-    lastError = result.error.issues
-      .slice(0, 5)
-      .map((i) => `${i.path.join(".")}: ${i.message}`)
-      .join("; ")
-      .slice(0, 400);
+
+    lastError = formatIssues(normalized.issues);
     logger.warn("ai_structured_validation_failed", { model, attempt, lastError });
+    prompt = correctivePrompt(options.prompt, lastError);
   }
 
+  // Out of attempts: `lastError` says which failure mode we ended on.
+  const truncatedEnding = lastError.startsWith("output truncated");
   throw new AiResponseError(
-    `Structured output validation failed: ${lastError}`,
-    "The AI response did not match the expected structure. Please try again.",
+    truncatedEnding
+      ? `Structured output incomplete: ${lastError}`
+      : `Structured output validation failed: ${lastError}`,
+    truncatedEnding
+      ? "The AI response was cut off before it finished. Please retry."
+      : "The AI response did not match the expected structure. Please try again.",
   );
-}
-
-function stripFences(text: string): string {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  return fenced ? fenced[1] : trimmed;
 }

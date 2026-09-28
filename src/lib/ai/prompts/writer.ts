@@ -39,10 +39,11 @@ export function writerPrompt(input: {
     input.research ? `Background notes:\n${input.research}` : "",
     "",
     "Return JSON: {",
-    '  "title": string, "slug": string, "excerpt": string,',
-    '  "content": string (markdown body without an H1),',
-    '  "tags": [string], "seoTitle": string, "seoDescription": string,',
-    '  "category": string, "sourceTitles": [string]',
+    '  "title": string (≤200), "slug": string (lowercase, URL-friendly), "excerpt": string (≤600),',
+    '  "content": string (markdown body without an H1 — a plain string, never an object),',
+    '  "tags": [string] (≤20 items, each ≤60 chars),',
+    '  "seoTitle": string (≤90 chars), "seoDescription": string (≤300 chars),',
+    '  "category": string (≤80), "sourceTitles": [string] (≤8 items)',
     "}",
   ]
     .filter(Boolean)

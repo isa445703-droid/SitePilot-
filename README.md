@@ -156,7 +156,7 @@ All AI traffic flows through **one** service: `src/lib/ai/mistral.ts`.
 
 ```ts
 generateText(prompt, options)               // free-form text
-generateStructuredOutput(prompt, schema)    // Zod-validated JSON + 1 repair retry
+generateStructuredOutput(prompt, schema)    // Zod-validated JSON, self-repairing
 ```
 
 * `MISTRAL_API_KEY` is read server-side only (`src/lib/env.ts`); the browser never
@@ -168,10 +168,22 @@ generateStructuredOutput(prompt, schema)    // Zod-validated JSON + 1 repair ret
 * Responses are **data**: every structured output is validated with Zod before it is
   written to the database. The model never emits code, SQL or shell — the rendering
   engine parses Markdown/blocks into React elements, never `dangerouslySetInnerHTML`.
-* Failure handling: invalid JSON ⇒ one repair attempt ⇒ `AI_RESPONSE_INVALID (502)`;
-  rate limit ⇒ `RATE_LIMITED (429)`; missing key in production ⇒ `AI_NOT_CONFIGURED (503)`.
-* Schemas are deliberately forgiving where models drift (`catch("")`, type coercion,
-  length headroom): a slightly off answer becomes clean data instead of a failed task.
+* Failure handling distinguishes three cases instead of blindly retrying the same
+  request (`src/lib/ai/mistral.ts` + `src/lib/ai/repair.ts`):
+  * **truncated completion** (`finish_reason: "length"`) ⇒ re-request with a doubled
+    token budget. The cut payload is never "repaired": closing the braces would
+    validate a half-written article and publish it.
+  * **malformed JSON** ⇒ lenient parse (markdown fences, prose around the payload,
+    trailing commas, unclosed structures), then a corrective retry that carries the
+    exact Zod issues back to the model.
+  * **schema drift** ⇒ safe normalisation first — shrink over-long strings/arrays to
+    their declared limits, unwrap `content: { text }`, coerce `"42"` — then the
+    corrective retry, then `AI_RESPONSE_INVALID (502)`.
+  Rate limit ⇒ `RATE_LIMITED (429)`; missing key in production ⇒ `AI_NOT_CONFIGURED (503)`.
+* Repair never invents content: values are only shrunk, unwrapped or coerced, missing
+  required fields always go back to the model, and every applied fix is logged as
+  `ai_structured_repaired`. At most three attempts are spent per call, so a poisoned
+  task still fails fast into the scheduler's own retry budget.
 
 ### Agents & permissions
 
@@ -214,6 +226,12 @@ history scoped to one site.
 * Every tick first recovers tasks that stalled in `RUNNING` (requeued until
   `MAX_TASK_ATTEMPTS`, then failed) and drops expired sessions, then dispatches
   due tasks.
+* Ticks never overlap: a single in-process lock makes a tick that is still
+  working (article generation takes 40-80s, the interval fires every 60s) log
+  `scheduler_tick_skipped` and return instead of racing the previous tick.
+  Tick results report `ran / completed / failed / skipped`, where `skipped` is a
+  claim lost to a concurrent runner — that is logged as `task_claim_miss`, never
+  counted as a task failure.
 
 ## 9. Internationalisation & theming
 
@@ -239,6 +257,10 @@ npm test
 | --------------------------- | ------------------------------------------------------------- |
 | `tests/blueprint-schema.test.ts`  | blueprint validation, defaults, hostile input rejection    |
 | `tests/article-generation.test.ts`| generated article/SEO/content-plan response validation      |
+| `tests/ai-repair.test.ts`         | tolerant JSON parsing, safe output repair, truncation retry (mocked provider) |
+| `tests/instrumentation.test.ts`   | scheduler boots through the entry point Next.js actually loads |
+| `tests/scheduler-tick.test.ts`    | tick mutex (no overlapping ticks) and `ran/completed/failed/skipped` accounting |
+| `tests/task-claim.test.ts`        | atomic claim: a lost race is `skipped`, a vanished task is warned about |
 | `tests/site-ownership.test.ts`    | `getOwnedSite` access control (member / stranger / missing) |
 | `tests/autopilot.test.ts`         | autopilot task creation, MANUAL cancellation, schedule maths |
 | `tests/task-policy.test.ts`       | retry/backoff policy: attempt cap, transient vs permanent failures |
