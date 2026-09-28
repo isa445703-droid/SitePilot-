@@ -1,4 +1,4 @@
-# SitePilot
+﻿# SitePilot
 
 **Describe your website. AI runs it.**
 
@@ -55,6 +55,7 @@ Copy-Item .env.example .env
 | `STRIPE_SECRET_KEY`     | ⬜        | Reserved for billing (unused in the MVP; only flips a `billing.enabled` flag in `/api/settings`) |
 | `SEARCH_PROVIDER`       | ⬜        | Reserved for a real search backend. **No provider is implemented yet** — research is explicitly mocked and every row is marked `isMock` (see `src/lib/agents/research-provider.ts`) |
 | `DISABLE_SCHEDULER`     | ⬜        | `1` disables the in-process autopilot loop (use for multi-instance deploys) |
+| `SITE_ADDRESSING`       | ⬜        | `subdomain` or `path` for public site URLs. Auto-detected: hosts that cannot serve wildcards (Vercel, Cloudflare Pages, GitHub Pages) use `/s/<slug>`, everything else uses `<slug>.<root>` |
 
 `.env` is git-ignored — never commit it. All reads go through `src/lib/env.ts`;
 only `NEXT_PUBLIC_*` values can reach the browser.
@@ -292,7 +293,39 @@ history scoped to one site.
   (`formatDate` / `formatNumber`), and dark mode supports light/dark/system with a
   no-flash script.
 
-## 10. Testing
+## 10. Generated-site design system
+
+Public sites and the dashboard preview render through the same components, so
+what an owner previews is exactly what a visitor gets.
+
+* **Tokens** — the AI (or a human in the blueprint editor) picks the base
+  colours; `src/lib/preview/color.ts` derives every other role from them:
+  surface, page background, muted text, borders, three shadow levels, button
+  fill and label ink. Each derivation is contrast-guarded (WCAG), so a
+  washed-out palette is corrected instead of shipping unreadable pages.
+* **Palette split** — `SiteDesign` stores `surfaceColor` (cards, header,
+  footer) separately from `backgroundColor` (the page behind them), plus
+  `mutedColor`. `normalizeDesign()` migrates rows written before the split, for
+  both light and dark sites, so existing sites keep their look.
+* **Style axes** — `fontStyle` (modern/classic/editorial), `layoutStyle`
+  (centered/wide/magazine), `cardStyle` (soft/flat/outlined), `cardDensity`
+  (compact/comfortable), `headerStyle` (plain/brand/gradient) and `heroStyle`
+  (simple/banded/centered) compose into the final look.
+* **Rendering** — sticky blurred header with a brand mark and a scrollable
+  mobile nav, skip link, hero band, featured card, category chips, breadcrumbs,
+  related articles, print styles and `prefers-reduced-motion` support. All of it
+  is a server component: public pages ship no extra JavaScript.
+* **Addressing** — sites are served at `/s/<slug>/…`, or on `<slug>.<root>` when
+  the host supports wildcard DNS. `siteAddressing()` picks path mode
+  automatically on Vercel/Cloudflare Pages/GitHub Pages, and `SITE_ADDRESSING`
+  overrides it. Internal links are always site-scoped; the legacy global
+  `/a|p|c/<slug>` routes remain for old inbound links, render the owning site and
+  advertise a canonical URL.
+* **Unicode slugs** — `slugify()` keeps Cyrillic and Hangul letters, so every
+  public route decodes its parameters through `decodeRouteParam()` before
+  querying. Without it a site named "Дом" would 404 on every link.
+
+## 11. Testing
 
 ```powershell
 npm test
@@ -314,12 +347,15 @@ npm test
 | `tests/session-token.test.ts`     | session tokens are stored hashed, never in the clear |
 | `tests/i18n.test.ts`              | locale parity, translation switching, locale-aware formats  |
 | `tests/i18n-keys.test.ts`         | every `t()` key used in `src/` exists                       |
+| `tests/preview-design.test.ts`    | colour maths (contrast/mix), button fill+ink choice, legacy design migration |
+| `tests/route-params.test.ts`      | percent-encoded Unicode slugs decode and round-trip         |
+| `tests/site-url.test.ts`          | public addressing: subdomain vs path mode, host → site slug  |
 
 Run `npm run lint && npm run typecheck && npm test && npm run build` before
 shipping — CI runs the same sequence on every push
 (`.github/workflows/ci.yml`).
 
-## 11. Project structure
+## 12. Project structure
 
 ```
 ├── locales/                 en.json · ru.json · ko.json (all UI strings)
@@ -350,7 +386,7 @@ shipping — CI runs the same sequence on every push
 └── tests/                   vitest suites
 ```
 
-## 12. API overview
+## 13. API overview
 
 All endpoints return `{ ok: true, data }` or
 `{ ok: false, error: { code, message, issues? } }` and validate input with Zod.
@@ -368,7 +404,7 @@ All endpoints return `{ ok: true, data }` or
 | `GET /api/sites/:id/{activity,tasks,schedule,analytics,seo}` | history, queue, cadence, data |
 | `GET /api/cron` (POST + `CRON_SECRET`)           | external scheduler tick                  |
 
-## 13. Security & cost notes
+## 14. Security & cost notes
 
 * Session = random token in an httpOnly, `SameSite=Lax` cookie (`sitepilot_session`);
   only `sha256(token)` is stored in the database, so a leaked dump cannot be
@@ -382,3 +418,4 @@ All endpoints return `{ ok: true, data }` or
 * Agent tasks are claimed atomically, retried up to 3 times with exponential
   backoff, and any task left `RUNNING` by a crashed process is re-queued (or
   failed once out of attempts) on the next scheduler tick.
+
