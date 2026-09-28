@@ -603,7 +603,26 @@
     "deleteWarning": "이 사이트와 모든 페이지, 기사, 미디어, 일정, 분석이 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
     "deleteDialogTitle": "{{name}}을(를) 삭제할까요?",
     "deleteDialogHint": "확인하려면 사이트 이름을 입력하세요.",
-    "deleted": "사이트가 삭제되었습니다."
+    "deleted": "사이트가 삭제되었습니다.",
+    "surfaceColor": "카드 색상",
+    "mutedColor": "약한 텍스트",
+    "headerStyle": "헤더",
+    "headers": {
+      "plain": "기본",
+      "brand": "브랜드 색상",
+      "gradient": "그라디언트"
+    },
+    "heroStyle": "히어로",
+    "heroes": {
+      "simple": "간단",
+      "banded": "배경 음영",
+      "centered": "가운데 정렬"
+    },
+    "cardDensity": "카드 밀도",
+    "densities": {
+      "compact": "촘촘",
+      "comfortable": "넓게"
+    }
   },
   "preview": {
     "badge": "미리보기",

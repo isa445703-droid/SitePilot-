@@ -45,11 +45,16 @@ export default async function SiteSettingsPage({ params }: Params) {
             ? {
                 primaryColor: design.primaryColor,
                 secondaryColor: design.secondaryColor,
+                surfaceColor: design.surfaceColor,
                 backgroundColor: design.backgroundColor,
                 textColor: design.textColor,
+                mutedColor: design.mutedColor,
                 fontStyle: design.fontStyle,
                 layoutStyle: design.layoutStyle,
                 cardStyle: design.cardStyle,
+                headerStyle: design.headerStyle,
+                heroStyle: design.heroStyle,
+                cardDensity: design.cardDensity,
                 borderRadius: design.borderRadius,
               }
             : null,

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db/prisma";
 import { buildSitemap, type SitemapEntry } from "@/lib/seo";
 import { siteOrigin } from "@/lib/site-url";
+import { decodeRouteParam } from "@/lib/utils/params";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,8 @@ type Params = { params: Promise<{ slug: string }> };
  * generated site with absolute subdomain URLs.
  */
 export async function GET(_req: Request, { params }: Params) {
-  const { slug } = await params;
+  const { slug: raw } = await params;
+  const slug = decodeRouteParam(raw);
   const site = await db.site.findFirst({ where: { slug, status: { not: "ARCHIVED" } } });
   if (!site) return new Response("Not found", { status: 404 });
 

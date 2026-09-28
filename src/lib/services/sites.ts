@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { generateBlueprint } from "@/lib/ai";
-import { blueprintSchema, type Blueprint } from "@/lib/ai/schemas";
+import { blueprintDesignSchema, blueprintSchema, type Blueprint } from "@/lib/ai/schemas";
 import { throwAgentFailure, withAgentRun } from "@/lib/agents/run";
 import { provisionSiteFromBlueprint } from "@/lib/agents/orchestrator";
 import { getOwnedSite } from "@/lib/auth/guards";
@@ -39,18 +39,8 @@ export const updateSiteSchema = z.object({
   metaDescription: z.string().trim().max(180).optional(),
   brandVoice: z.string().trim().max(2000).optional(),
   keywords: z.array(z.string().max(80)).max(30).optional(),
-  design: z
-    .object({
-      primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      secondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      fontStyle: z.enum(["modern", "classic", "editorial"]),
-      layoutStyle: z.enum(["centered", "wide", "magazine"]),
-      cardStyle: z.enum(["soft", "flat", "outlined"]),
-      borderRadius: z.number().int().min(0).max(32),
-    })
-    .optional(),
+  // New design fields are optional so clients on an older payload still save.
+  design: blueprintDesignSchema.partial().optional(),
 });
 
 export type CreateSiteInput = z.infer<typeof createSiteSchema>;

@@ -8,7 +8,9 @@ import { recordPageView } from "@/lib/analytics";
 import { getServerI18n } from "@/lib/i18n/server";
 import { formatDate } from "@/lib/i18n/config";
 import { SiteChrome } from "@/components/preview/site-chrome";
+import { Breadcrumbs } from "@/components/preview/site-parts";
 import { Markdown } from "@/components/preview/markdown";
+import { decodeRouteParam } from "@/lib/utils/params";
 
 export const metadata: Metadata = { title: "Preview" };
 
@@ -16,7 +18,8 @@ type Params = { params: Promise<{ siteId: string; slug: string }> };
 
 export default async function PreviewArticlePage({ params }: Params) {
   const user = await requireUser();
-  const { siteId, slug } = await params;
+  const { siteId, slug: raw } = await params;
+  const slug = decodeRouteParam(raw);
   const owned = await getOwnedSite(siteId, user.id);
   if (!owned) notFound();
 
@@ -51,41 +54,44 @@ export default async function PreviewArticlePage({ params }: Params) {
         </div>
       }
     >
-      <article>
-        {article.category ? (
-          <p style={{ marginBottom: "0.4rem" }}>
-            <Link className="pv-pill" href={`${basePath}/c/${article.category.slug}`}>
-              {article.category.name}
-            </Link>
+      <article className="pv-article">
+        <Breadcrumbs
+          basePath={basePath}
+          homeLabel={t("preview.home")}
+          current={article.category?.name}
+          currentHref={article.category ? `${basePath}/c/${article.category.slug}` : undefined}
+        />
+
+        <header className="pv-article-head">
+          <h1>{article.title}</h1>
+          <p className="pv-meta pv-article-meta">
+            {article.status === "PUBLISHED" ? null : <span className="pv-status">{article.status}</span>}
+            {formatDate(article.publishedAt ?? article.createdAt, locale)}
+            {article.author ? ` · ${article.author}` : ""}
+            {article.wordCount ? ` · ${t("editor.wordCount", { count: article.wordCount })}` : ""}
           </p>
-        ) : null}
-        <h1>{article.title}</h1>
-        <p className="pv-meta">
-          {t("preview.publishedOn", {
-            date: formatDate(article.publishedAt ?? article.updatedAt, locale),
-          })}
-          {article.author ? ` · ${article.author}` : ""}
-          {` · ${t("editor.wordCount", { count: article.wordCount })}`}
-        </p>
+        </header>
 
         {article.excerpt ? <p className="pv-lead">{article.excerpt}</p> : null}
 
-        <Markdown content={article.content || ""} />
+        <Markdown className="pv-prose-body" content={article.content || ""} />
 
         {article.tags.length > 0 ? (
-          <p className="pv-pill-list">
+          <div className="pv-pill-list">
             {article.tags.map((tag) => (
-              <span className="pv-pill" key={tag}>
+              <span className="pv-tag" key={tag}>
                 #{tag}
               </span>
             ))}
-          </p>
+          </div>
         ) : null}
-      </article>
 
-      <nav aria-label={t("preview.categories")} style={{ marginTop: "2.5rem" }}>
-        <Link href={basePath}>← {t("common.goHome")}</Link>
-      </nav>
+        <footer className="pv-article-foot">
+          <Link href={basePath} className="pv-btn pv-btn-ghost">
+            ← {t("common.goHome")}
+          </Link>
+        </footer>
+      </article>
     </SiteChrome>
   );
 }

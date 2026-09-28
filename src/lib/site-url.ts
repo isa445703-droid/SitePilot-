@@ -22,6 +22,24 @@ function rootHost(appUrl?: string): string {
   return hostname;
 }
 
+/**
+ * How generated sites are addressed publicly.
+ *
+ * `subdomain` needs wildcard DNS for the root domain (`<slug>.example.com`).
+ * Hosts that cannot serve arbitrary subdomains — most notably Vercel deployment
+ * hosts, which only route `<project>.vercel.app` — must use the path form
+ * (`/s/<slug>`) or every "open site" link would dead-end on a 404.
+ */
+export function siteAddressing(appUrl?: string): "subdomain" | "path" {
+  const explicit = (process.env.SITE_ADDRESSING ?? "").trim().toLowerCase();
+  if (explicit === "path" || explicit === "subdomain") return explicit;
+  const host = rootHost(appUrl);
+  if (host.endsWith(".vercel.app") || host.endsWith(".pages.dev") || host.endsWith(".github.io")) {
+    return "path";
+  }
+  return "subdomain";
+}
+
 /** Absolute origin on which the given site is publicly served. */
 export function siteOrigin(slug: string, appUrl?: string): string {
   const raw = (appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
@@ -34,13 +52,15 @@ export function siteOrigin(slug: string, appUrl?: string): string {
   } catch {
     // fall back to http without port
   }
-  return `${protocol}//${slug}.${rootHost(appUrl)}${port}`;
+  const host = rootHost(appUrl);
+  const base = `${protocol}//${host}${port}`;
+  return siteAddressing(appUrl) === "path" ? `${base}/s/${slug}` : `${protocol}//${slug}.${host}${port}`;
 }
 
 /** Absolute public URL for a path on the given site ("" or "/" = home). */
-export function siteHref(slug: string, path = "/"): string {
+export function siteHref(slug: string, path = "/", appUrl?: string): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${siteOrigin(slug)}${suffix === "/" ? "/" : suffix}`;
+  return `${siteOrigin(slug, appUrl)}${suffix === "/" ? "/" : suffix}`;
 }
 
 const SUBDOMAIN_RE = /^[a-z0-9][a-z0-9-]*$/;

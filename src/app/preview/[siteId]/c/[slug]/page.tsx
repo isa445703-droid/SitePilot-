@@ -7,6 +7,8 @@ import { loadSitePreview } from "@/lib/preview/data";
 import { getServerI18n } from "@/lib/i18n/server";
 import { formatDate } from "@/lib/i18n/config";
 import { SiteChrome } from "@/components/preview/site-chrome";
+import { ArticleCard, Breadcrumbs, SectionHead } from "@/components/preview/site-parts";
+import { decodeRouteParam } from "@/lib/utils/params";
 
 export const metadata: Metadata = { title: "Preview" };
 
@@ -14,7 +16,8 @@ type Params = { params: Promise<{ siteId: string; slug: string }> };
 
 export default async function PreviewCategoryPage({ params }: Params) {
   const user = await requireUser();
-  const { siteId, slug } = await params;
+  const { siteId, slug: raw } = await params;
+  const slug = decodeRouteParam(raw);
   const owned = await getOwnedSite(siteId, user.id);
   if (!owned) notFound();
 
@@ -25,14 +28,12 @@ export default async function PreviewCategoryPage({ params }: Params) {
   const category = await db.category.findFirst({ where: { siteId: site.id, slug } });
   if (!category) notFound();
 
-  const [articles, related] = await Promise.all([
-    db.article.findMany({
-      where: { siteId: site.id, categoryId: category.id, status: "PUBLISHED" },
-      orderBy: [{ publishedAt: "desc" }],
-      take: 50,
-    }),
-    Promise.resolve(categories),
-  ]);
+  const articles = await db.article.findMany({
+    where: { siteId: site.id, categoryId: category.id, status: { not: "ARCHIVED" } },
+    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+    take: 50,
+    include: { category: { select: { id: true, name: true, slug: true } } },
+  });
 
   const { t, locale } = await getServerI18n();
   const basePath = `/preview/${site.id}`;
@@ -43,7 +44,7 @@ export default async function PreviewCategoryPage({ params }: Params) {
       siteSlug={site.slug}
       basePath={basePath}
       design={design}
-      categories={related}
+      categories={categories}
       footerText={settings?.footerText || undefined}
       locale={locale}
       homeLabel={t("preview.home")}
@@ -53,28 +54,48 @@ export default async function PreviewCategoryPage({ params }: Params) {
         </div>
       }
     >
-      <section>
+      <section className="pv-page-head">
+        <Breadcrumbs basePath={basePath} homeLabel={t("preview.home")} current={category.name} />
         <h1>{category.name}</h1>
         {category.description ? <p className="pv-hero-sub">{category.description}</p> : null}
+        <p className="pv-meta">
+          {articles.length} · {t("preview.latestArticles").toLowerCase()}
+        </p>
+      </section>
 
-        {articles.length === 0 ? (
-          <p className="pv-section">{t("preview.noArticles")}</p>
-        ) : (
-          <div className="pv-card-grid pv-section">
-            {articles.map((article) => (
-              <div className="pv-card" key={article.id}>
-                <h3>
-                  <Link href={`${basePath}/a/${article.slug}`}>{article.title}</Link>
-                </h3>
-                {article.excerpt ? <p>{article.excerpt}</p> : null}
-                <p className="pv-meta">
-                  {formatDate(article.publishedAt ?? article.updatedAt, locale)}
-                </p>
-              </div>
+      {articles.length === 0 ? (
+        <p className="pv-empty">{t("preview.noArticles")}</p>
+      ) : (
+        <div className="pv-card-grid">
+          {articles.map((article) => (
+            <ArticleCard
+              key={article.id}
+              article={article}
+              href={`${basePath}/a/${article.slug}`}
+              meta={formatDate(article.publishedAt ?? article.createdAt, locale)}
+              status={article.status === "PUBLISHED" ? null : article.status}
+            />
+          ))}
+        </div>
+      )}
+
+      {categories.length > 1 ? (
+        <section className="pv-section">
+          <SectionHead title={t("preview.categories")} />
+          <div className="pv-chip-row">
+            {categories.map((item) => (
+              <Link
+                key={item.id}
+                href={`${basePath}/c/${item.slug}`}
+                className={item.id === category.id ? "pv-chip pv-chip-active" : "pv-chip"}
+                aria-current={item.id === category.id ? "page" : undefined}
+              >
+                {item.name}
+              </Link>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      ) : null}
     </SiteChrome>
   );
 }

@@ -447,6 +447,85 @@ export function BlueprintEditor({ value, onChange, disabled = false }: Props) {
                 />
               )}
             </Field>
+            <ColorField
+              label={t("siteSettings.surfaceColor")}
+              value={value.design.surfaceColor}
+              onChange={(surfaceColor) => patch({ design: { ...value.design!, surfaceColor } })}
+            />
+            <ColorField
+              label={t("siteSettings.mutedColor")}
+              value={value.design.mutedColor}
+              onChange={(mutedColor) => patch({ design: { ...value.design!, mutedColor } })}
+            />
+            <Field label={t("siteSettings.headerStyle")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={value.design!.headerStyle}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    patch({
+                      design: {
+                        ...value.design!,
+                        headerStyle: event.target.value as "plain" | "brand" | "gradient",
+                      },
+                    })
+                  }
+                >
+                  {["plain", "brand", "gradient"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.headers.${option}`)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label={t("siteSettings.heroStyle")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={value.design!.heroStyle}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    patch({
+                      design: {
+                        ...value.design!,
+                        heroStyle: event.target.value as "simple" | "banded" | "centered",
+                      },
+                    })
+                  }
+                >
+                  {["simple", "banded", "centered"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.heroes.${option}`)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label={t("siteSettings.cardDensity")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={value.design!.cardDensity}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    patch({
+                      design: {
+                        ...value.design!,
+                        cardDensity: event.target.value as "compact" | "comfortable",
+                      },
+                    })
+                  }
+                >
+                  {["compact", "comfortable"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.densities.${option}`)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </CardBody>
         </Card>
       ) : null}

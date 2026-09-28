@@ -199,12 +199,18 @@ model SiteDesign {
   site           Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
   primaryColor   String @default("#2563eb")
   secondaryColor String @default("#0f172a")
-  backgroundColor String @default("#ffffff")
+  // surfaceColor backs cards/header/footer, backgroundColor the page behind them.
+  surfaceColor   String @default("#ffffff")
+  backgroundColor String @default("#f7f8fa")
   textColor      String @default("#0f172a")
+  mutedColor     String @default("#475569")
   fontStyle      String @default("modern") // modern | classic | editorial
   borderRadius   Int    @default(12)
   layoutStyle    String @default("centered") // centered | wide | magazine
   cardStyle      String @default("soft") // soft | flat | outlined
+  headerStyle    String @default("plain") // plain | brand | gradient
+  heroStyle      String @default("banded") // simple | banded | centered
+  cardDensity    String @default("comfortable") // compact | comfortable
   updatedAt      DateTime @updatedAt
 }
 

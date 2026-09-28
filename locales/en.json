@@ -603,7 +603,26 @@
     "deleteWarning": "Permanently delete this site with all its pages, articles, media, schedules and analytics. This action cannot be undone.",
     "deleteDialogTitle": "Delete {{name}}?",
     "deleteDialogHint": "Type the site name to confirm.",
-    "deleted": "Site deleted"
+    "deleted": "Site deleted",
+    "surfaceColor": "Card color",
+    "mutedColor": "Muted text",
+    "headerStyle": "Header",
+    "headers": {
+      "plain": "Plain",
+      "brand": "Brand color",
+      "gradient": "Gradient"
+    },
+    "heroStyle": "Hero",
+    "heroes": {
+      "simple": "Simple",
+      "banded": "Tinted band",
+      "centered": "Centered"
+    },
+    "cardDensity": "Card density",
+    "densities": {
+      "compact": "Compact",
+      "comfortable": "Comfortable"
+    }
   },
   "preview": {
     "badge": "Preview",

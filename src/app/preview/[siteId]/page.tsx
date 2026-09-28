@@ -3,12 +3,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser, getOwnedSite } from "@/lib/auth/guards";
 import { db } from "@/lib/db/prisma";
-import { loadSitePreview, publishedArticles } from "@/lib/preview/data";
+import { loadSitePreview } from "@/lib/preview/data";
 import { recordPageView } from "@/lib/analytics";
 import { getServerI18n } from "@/lib/i18n/server";
 import { formatDate } from "@/lib/i18n/config";
 import { SiteChrome } from "@/components/preview/site-chrome";
-import { Markdown } from "@/components/preview/markdown";
+import { ArticleCard, SectionHead } from "@/components/preview/site-parts";
+import { Blocks } from "@/components/preview/public-views";
 
 export const metadata: Metadata = { title: "Preview" };
 
@@ -25,7 +26,12 @@ export default async function PreviewHomePage({ params }: Params) {
 
   const { site, design, settings, categories } = data;
   const { t, locale } = await getServerI18n();
-  const articles = await publishedArticles(site.id, 6);
+  const articles = await db.article.findMany({
+    where: { siteId: site.id, status: { not: "ARCHIVED" } },
+    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+    take: 7,
+    include: { category: { select: { id: true, name: true, slug: true } } },
+  });
   const homePage = await db.page.findFirst({
     where: { siteId: site.id, slug: "", status: "PUBLISHED" },
   });
@@ -33,6 +39,7 @@ export default async function PreviewHomePage({ params }: Params) {
   await recordPageView(site.id);
 
   const basePath = `/preview/${site.id}`;
+  const [lead, ...rest] = articles;
 
   return (
     <SiteChrome
@@ -52,82 +59,64 @@ export default async function PreviewHomePage({ params }: Params) {
     >
       <section className="pv-hero">
         <h1>{site.name}</h1>
-        <p className="pv-hero-sub">{site.description}</p>
+        {site.description ? <p className="pv-hero-sub">{site.description}</p> : null}
         {articles.length > 0 ? (
-          <a href="#latest" className="pv-btn">
-            {t("preview.browseArticles")}
-          </a>
+          <div className="pv-hero-actions">
+            <a href="#latest" className="pv-btn">
+              {t("preview.browseArticles")}
+            </a>
+          </div>
         ) : null}
-        {homePage?.content ? <Blocks content={homePage.content} /> : null}
+        {homePage?.content ? (
+          <div className="pv-hero-blocks">
+            <Blocks content={homePage.content} />
+          </div>
+        ) : null}
       </section>
 
       <section className="pv-section" id="latest">
-        <h2>{t("preview.latestArticles")}</h2>
+        <SectionHead title={t("preview.latestArticles")} />
         {articles.length === 0 ? (
-          <p>{t("preview.noArticles")}</p>
+          <p className="pv-empty">{t("preview.noArticles")}</p>
         ) : (
           <div className="pv-card-grid">
-            {articles.map((article) => (
-              <article key={article.id} className="pv-card">
-                {article.category ? (
-                  <Link href={`${basePath}/c/${article.category.slug}`} className="pv-pill">
-                    {article.category.name}
-                  </Link>
-                ) : null}
-                <h3>
-                  <Link href={`${basePath}/a/${article.slug}`}>{article.title}</Link>
-                </h3>
-                <p>{article.excerpt}</p>
-                <p className="pv-meta">
-                  {t("preview.publishedOn", {
-                    date: formatDate(article.publishedAt ?? article.updatedAt, locale),
-                  })}
-                </p>
-              </article>
+            {lead ? (
+              <ArticleCard
+                article={lead}
+                href={`${basePath}/a/${lead.slug}`}
+                categoryHref={lead.category ? `${basePath}/c/${lead.category.slug}` : undefined}
+                meta={formatDate(lead.publishedAt ?? lead.createdAt, locale)}
+                featured
+                status={lead.status === "PUBLISHED" ? null : lead.status}
+              />
+            ) : null}
+            {rest.map((article) => (
+              <ArticleCard
+                key={article.id}
+                article={article}
+                href={`${basePath}/a/${article.slug}`}
+                categoryHref={article.category ? `${basePath}/c/${article.category.slug}` : undefined}
+                meta={formatDate(article.publishedAt ?? article.createdAt, locale)}
+                status={article.status === "PUBLISHED" ? null : article.status}
+              />
             ))}
           </div>
         )}
       </section>
 
-      <section className="pv-section">
-        <h2>{t("preview.categories")}</h2>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <Link key={category.id} href={`${basePath}/c/${category.slug}`} className="pv-pill">
-              {category.name}
-            </Link>
-          ))}
-        </div>
-      </section>
+      {categories.length > 0 ? (
+        <section className="pv-section">
+          <SectionHead title={t("preview.categories")} />
+          <div className="pv-chip-grid">
+            {categories.map((category) => (
+              <Link key={category.id} href={`${basePath}/c/${category.slug}`} className="pv-chip">
+                <span className="pv-chip-name">{category.name}</span>
+                {category.description ? <span className="pv-chip-desc">{category.description}</span> : null}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </SiteChrome>
-  );
-}
-
-/** Page blocks stored as JSON (data only). */
-function Blocks({ content }: { content: unknown }) {
-  const blocks = Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
-  return (
-    <>
-      {blocks.map((block, index) => {
-        if (block.type === "heading") {
-          const text = String(block.text ?? "");
-          const level = Number(block.level ?? 2);
-          if (level <= 1) return <h2 key={index}>{text}</h2>;
-          return <h3 key={index}>{text}</h3>;
-        }
-        if (block.type === "list") {
-          const items = Array.isArray(block.items) ? (block.items as string[]) : [];
-          return (
-            <ul key={index}>
-              {items.map((item, itemIndex) => (
-                <li key={itemIndex}>{item}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.type === "quote") return <blockquote key={index}>{String(block.text ?? "")}</blockquote>;
-        return <Markdown key={index} content={String(block.text ?? "")} />;
-      })}
-    </>
   );
 }

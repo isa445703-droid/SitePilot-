@@ -6,7 +6,9 @@ import { db } from "@/lib/db/prisma";
 import { loadSitePreview } from "@/lib/preview/data";
 import { getServerI18n } from "@/lib/i18n/server";
 import { SiteChrome } from "@/components/preview/site-chrome";
-import { Markdown } from "@/components/preview/markdown";
+import { Breadcrumbs } from "@/components/preview/site-parts";
+import { Blocks } from "@/components/preview/public-views";
+import { decodeRouteParam } from "@/lib/utils/params";
 
 export const metadata: Metadata = { title: "Preview" };
 
@@ -14,7 +16,8 @@ type Params = { params: Promise<{ siteId: string; slug: string }> };
 
 export default async function PreviewPagePage({ params }: Params) {
   const user = await requireUser();
-  const { siteId, slug } = await params;
+  const { siteId, slug: raw } = await params;
+  const slug = decodeRouteParam(raw);
   const owned = await getOwnedSite(siteId, user.id);
   if (!owned) notFound();
 
@@ -44,43 +47,20 @@ export default async function PreviewPagePage({ params }: Params) {
         </div>
       }
     >
-      <article>
-        <h1>{page.title}</h1>
-        <Blocks content={page.content} />
+      <article className="pv-article pv-page">
+        <Breadcrumbs basePath={basePath} homeLabel={t("preview.home")} />
+        <header className="pv-article-head">
+          <h1>{page.title}</h1>
+        </header>
+        <div className="pv-prose-body">
+          <Blocks content={page.content} />
+        </div>
+        <footer className="pv-article-foot">
+          <Link href={basePath} className="pv-btn pv-btn-ghost">
+            ← {t("common.goHome")}
+          </Link>
+        </footer>
       </article>
-      <nav aria-label={t("common.goHome")} style={{ marginTop: "2.5rem" }}>
-        <Link href={basePath}>← {t("common.goHome")}</Link>
-      </nav>
     </SiteChrome>
-  );
-}
-
-/** Page blocks stored as JSON (plain data, never executable). */
-function Blocks({ content }: { content: unknown }) {
-  const blocks = Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
-  return (
-    <>
-      {blocks.map((block, index) => {
-        if (block.type === "heading") {
-          const text = String(block.text ?? "");
-          const level = Number(block.level ?? 2);
-          return level <= 1 ? <h2 key={index}>{text}</h2> : <h3 key={index}>{text}</h3>;
-        }
-        if (block.type === "list") {
-          const items = Array.isArray(block.items) ? (block.items as string[]) : [];
-          return (
-            <ul key={index}>
-              {items.map((item, itemIndex) => (
-                <li key={itemIndex}>{item}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.type === "quote") {
-          return <blockquote key={index}>{String(block.text ?? "")}</blockquote>;
-        }
-        return <Markdown key={index} content={String(block.text ?? "")} />;
-      })}
-    </>
   );
 }

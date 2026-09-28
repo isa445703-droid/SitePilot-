@@ -6,6 +6,15 @@ import { LOCALE_DIRS, resolveLocale } from "@/lib/i18n/config";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 
 export const metadata: Metadata = {
+  // Absolute canonical/OG URLs need a base; the dashboard itself stays noindex
+  // and public generated sites opt in per site (SiteSettings.indexable).
+  metadataBase: (() => {
+    try {
+      return new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
+    } catch {
+      return new URL("http://localhost:3000");
+    }
+  })(),
   title: {
     default: "SitePilot — Describe your website. AI runs it.",
     template: "%s · SitePilot",

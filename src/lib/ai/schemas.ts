@@ -35,12 +35,22 @@ export const blueprintPageSchema = z.object({
 export const blueprintDesignSchema = z.object({
   primaryColor: colorSchema,
   secondaryColor: colorSchema,
-  backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).catch("#ffffff"),
+  /** Surface colour for cards, header and footer — the page itself stays light or dark. */
+  surfaceColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).catch("#ffffff"),
+  backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).catch("#f7f8fa"),
   textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).catch("#0f172a"),
+  /** Slightly stronger text used for lead paragraphs. */
+  mutedColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).catch("#475569"),
   fontStyle: z.enum(["modern", "classic", "editorial"]).catch("modern"),
   layoutStyle: z.enum(["centered", "wide", "magazine"]).catch("centered"),
   cardStyle: z.enum(["soft", "flat", "outlined"]).catch("soft"),
   borderRadius: z.number().int().min(0).max(32).catch(12),
+  /** Renders the header with a solid brand-coloured bar and reversed text. */
+  headerStyle: z.enum(["plain", "brand", "gradient"]).catch("plain"),
+  /** Adds a full-bleed tinted band behind the home hero. */
+  heroStyle: z.enum(["simple", "banded", "centered"]).catch("banded"),
+  /** Shows images, tags and read-more affordances on article cards. */
+  cardDensity: z.enum(["compact", "comfortable"]).catch("comfortable"),
 });
 
 export const blueprintSchema = z.object({
@@ -66,12 +76,17 @@ export const blueprintSchema = z.object({
   design: blueprintDesignSchema.default({
     primaryColor: "#2563eb",
     secondaryColor: "#0f172a",
-    backgroundColor: "#ffffff",
+    surfaceColor: "#ffffff",
+    backgroundColor: "#f7f8fa",
     textColor: "#0f172a",
+    mutedColor: "#475569",
     fontStyle: "modern",
     layoutStyle: "centered",
     cardStyle: "soft",
     borderRadius: 12,
+    headerStyle: "plain",
+    heroStyle: "banded",
+    cardDensity: "comfortable",
   }),
 });
 

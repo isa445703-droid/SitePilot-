@@ -25,11 +25,16 @@ type Initial = {
   design: {
     primaryColor: string;
     secondaryColor: string;
+    surfaceColor: string;
     backgroundColor: string;
     textColor: string;
+    mutedColor: string;
     fontStyle: string;
     layoutStyle: string;
     cardStyle: string;
+    headerStyle: string;
+    heroStyle: string;
+    cardDensity: string;
     borderRadius: number;
   } | null;
   settings: { siteTitle: string; metaDescription: string; indexable: boolean };
@@ -182,6 +187,11 @@ export function SiteSettingsForm({ siteId, initial }: { siteId: string; initial:
               onChange={(secondaryColor) => patchDesign({ secondaryColor })}
             />
             <ColorField
+              label={t("siteSettings.surfaceColor")}
+              value={design.surfaceColor}
+              onChange={(surfaceColor) => patchDesign({ surfaceColor })}
+            />
+            <ColorField
               label={t("siteSettings.backgroundColor")}
               value={design.backgroundColor}
               onChange={(backgroundColor) => patchDesign({ backgroundColor })}
@@ -190,6 +200,11 @@ export function SiteSettingsForm({ siteId, initial }: { siteId: string; initial:
               label={t("siteSettings.textColor")}
               value={design.textColor}
               onChange={(textColor) => patchDesign({ textColor })}
+            />
+            <ColorField
+              label={t("siteSettings.mutedColor")}
+              value={design.mutedColor}
+              onChange={(mutedColor) => patchDesign({ mutedColor })}
             />
             <Field label={t("siteSettings.fontStyle")}>
               {({ id }) => (
@@ -246,6 +261,51 @@ export function SiteSettingsForm({ siteId, initial }: { siteId: string; initial:
                   value={design.borderRadius}
                   onChange={(event) => patchDesign({ borderRadius: Number(event.target.value) || 0 })}
                 />
+              )}
+            </Field>
+            <Field label={t("siteSettings.headerStyle")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={design.headerStyle}
+                  onChange={(event) => patchDesign({ headerStyle: event.target.value })}
+                >
+                  {["plain", "brand", "gradient"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.headers.${option}`)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label={t("siteSettings.heroStyle")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={design.heroStyle}
+                  onChange={(event) => patchDesign({ heroStyle: event.target.value })}
+                >
+                  {["simple", "banded", "centered"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.heroes.${option}`)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label={t("siteSettings.cardDensity")}>
+              {({ id }) => (
+                <Select
+                  id={id}
+                  value={design.cardDensity}
+                  onChange={(event) => patchDesign({ cardDensity: event.target.value })}
+                >
+                  {["compact", "comfortable"].map((option) => (
+                    <option key={option} value={option}>
+                      {t(`siteSettings.densities.${option}`)}
+                    </option>
+                  ))}
+                </Select>
               )}
             </Field>
           </CardBody>
