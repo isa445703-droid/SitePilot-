@@ -150,6 +150,43 @@ npm run start
 * Docker/PM2/systemd all work — it is a standard Next.js server with a PostgreSQL
   dependency. Health check: `GET /` returns `200`.
 
+### Deploy to Vercel
+
+The app deploys as a plain Next.js project: middleware only parses the `Host`
+header (edge-safe), Prisma runs in the Node runtime, and `DISABLE_SCHEDULER=1`
+turns off the in-process loop — serverless instances are ephemeral.
+
+```powershell
+npx vercel login                             # browser device flow
+npx vercel project add sitepilot
+npx vercel link -p sitepilot --yes
+npx vercel integration add neon --non-interactive   # marketplace terms are accepted once in the browser
+
+# database (Neon): migrations + optional demo data
+$env:DATABASE_URL = '<DATABASE_URL_UNPOOLED from .env.local>'   # unpooled for DDL
+npx prisma migrate deploy
+$env:ALLOW_DEMO_SEED = "1"; npx tsx prisma/seed.ts
+
+npx vercel deploy --prod --yes               # builds server-side, `prisma generate` runs in `npm run build`
+```
+
+Environment variables (`vercel env add <NAME> production --value <value>`):
+`DATABASE_URL` (injected by the Neon integration), `MISTRAL_API_KEY`,
+`MISTRAL_MODEL`, `MISTRAL_MODEL_FAST`, `NEXTAUTH_SECRET`, `CRON_SECRET`,
+`NEXT_PUBLIC_APP_URL`, `NEXTAUTH_URL`, `DISABLE_SCHEDULER=1`.
+
+Scheduling on Vercel:
+
+* The **Hobby** plan allows cron jobs **once per day only** — `vercel.json` ships
+  `0 3 * * *` hitting `GET /api/cron` (Vercel sends
+  `Authorization: Bearer $CRON_SECRET` automatically when `CRON_SECRET` is set).
+  Expressions more frequent than daily fail the deployment on Hobby.
+* For minute-level autopilot, call `POST /api/cron` every minute from an external
+  scheduler (cron-job.org, CI, or a local loop). The tick tolerates concurrent
+  callers: the claim is atomic and overlapping ticks are skipped.
+* Generated sites are served at `/s/<slug>/…`. The `<slug>.<root-domain>` form
+  needs a custom domain with a wildcard DNS record (`*.yourdomain.com → Vercel`).
+
 ## 7. Mistral integration
 
 All AI traffic flows through **one** service: `src/lib/ai/mistral.ts`.

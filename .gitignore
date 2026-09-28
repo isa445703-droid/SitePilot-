@@ -33,3 +33,6 @@ __pycache__/
 foundry.zip
 foundryup.exe
 foundryup-init.sh
+
+.vercel
+.env*
