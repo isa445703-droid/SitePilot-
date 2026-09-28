@@ -1,0 +1,496 @@
+// SitePilot — Prisma schema (PostgreSQL)
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth & organization
+// ---------------------------------------------------------------------------
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String?
+  passwordHash String
+  // UI language preference (independent from generated site content language)
+  locale       String     @default("en")
+  theme        String     @default("system")
+  image        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  sessions     Session[]
+  memberships  OrgMember[]
+  sites        Site[]     @relation("SiteCreator")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Organization {
+  id           String         @id @default(cuid())
+  name         String
+  slug         String         @unique
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  members      OrgMember[]
+  sites        Site[]
+  subscription Subscription?
+}
+
+model OrgMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           OrgRole      @default(OWNER)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Subscription {
+  id                 String           @id @default(cuid())
+  organizationId     String           @unique
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan               String           @default("FREE") // FREE | STARTER | PRO
+  status             String           @default("ACTIVE") // ACTIVE | TRIALING | PAST_DUE | CANCELED
+  stripeCustomerId   String?
+  stripeSubscriptionId String?
+  currentPeriodEnd   DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+// Metered usage of the AI provider, per site (cost control / observability)
+model UsageEvent {
+  id             String   @id @default(cuid())
+  organizationId String?
+  siteId         String?
+  agent          String
+  model          String
+  taskType       String?
+  promptTokens   Int      @default(0)
+  outputTokens   Int      @default(0)
+  costUsd        Float?
+  createdAt      DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Site
+// ---------------------------------------------------------------------------
+
+enum SiteStatus {
+  DRAFT
+  BUILDING
+  LIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum AutopilotMode {
+  MANUAL
+  REVIEW
+  FULL
+}
+
+enum PublishingFrequency {
+  ONCE_A_WEEK
+  TWICE_A_WEEK
+  THREE_A_WEEK
+  FIVE_A_WEEK
+  DAILY
+}
+
+model Site {
+  id            String    @id @default(cuid())
+  organizationId String
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById   String
+  createdBy     User      @relation("SiteCreator", fields: [createdById], references: [id])
+
+  name        String
+  slug        String    @unique
+  description String    @default("")
+  /// Original natural-language brief provided by the user
+  brief       String    @default("")
+  /// Optional user description of the desired look & feel (interface, mood, layout)
+  designBrief String    @default("")
+  /// Language of the generated website content (independent from the UI language)
+  language    String    @default("en")
+  timezone    String    @default("UTC")
+  targetAudience String @default("")
+  primaryGoal    String @default("")
+  tone           String @default("")
+
+  status     SiteStatus      @default(DRAFT)
+  autopilot  AutopilotMode   @default(MANUAL)
+  frequency  PublishingFrequency @default(THREE_A_WEEK)
+  publishHour Int            @default(9)
+
+  /// Validated blueprint produced by the AI (Zod-validated before write)
+  blueprint  Json?
+  /// AI-recommended / user-approved design tokens
+  brand      SiteBrand?
+  design     SiteDesign?
+  settings   SiteSettings?
+  schedule   PublishingSchedule?
+
+  pages      Page[]
+  categories Category[]
+  articles   Article[]
+  media      Media[]
+  sources    ContentSource[]
+  research   ResearchItem[]
+  tasks      AgentTask[]
+  runs       AgentRun[]
+  analytics  AnalyticsDaily[]
+  SeoIssues  SeoIssue[]
+
+  isDemo     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([organizationId])
+}
+
+model SiteBrand {
+  id          String   @id @default(cuid())
+  siteId      String   @unique
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  brandVoice  String   @default("")
+  tone        String   @default("")
+  guidelines  String   @default("")
+  keywords    String[] @default([])
+  audienceNotes String @default("")
+  updatedAt   DateTime @updatedAt
+}
+
+model SiteDesign {
+  id             String @id @default(cuid())
+  siteId         String @unique
+  site           Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  primaryColor   String @default("#2563eb")
+  secondaryColor String @default("#0f172a")
+  backgroundColor String @default("#ffffff")
+  textColor      String @default("#0f172a")
+  fontStyle      String @default("modern") // modern | classic | editorial
+  borderRadius   Int    @default(12)
+  layoutStyle    String @default("centered") // centered | wide | magazine
+  cardStyle      String @default("soft") // soft | flat | outlined
+  updatedAt      DateTime @updatedAt
+}
+
+model SiteSettings {
+  id              String @id @default(cuid())
+  siteId          String @unique
+  site            Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteTitle       String @default("")
+  metaDescription String @default("")
+  ogImage         String @default("")
+  indexable       Boolean @default(true)
+  robotsTxt       String @default("User-agent: *\nAllow: /\nSitemap: {sitemap}")
+  analyticsEnabled Boolean @default(true)
+  postsPerPage    Int    @default(9)
+  footerText      String @default("")
+  updatedAt       DateTime @updatedAt
+}
+
+model PublishingSchedule {
+  id             String @id @default(cuid())
+  siteId         String @unique
+  site           Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  frequency      PublishingFrequency @default(THREE_A_WEEK)
+  timezone       String @default("UTC")
+  publishHour    Int    @default(9)
+  publishDays    String[] @default(["monday", "wednesday", "friday"])
+  enabled        Boolean @default(false)
+  nextRunAt      DateTime?
+  lastRunAt      DateTime?
+  updatedAt      DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+enum PageType {
+  HOME
+  ABOUT
+  CONTACT
+  CUSTOM
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Page {
+  id            String     @id @default(cuid())
+  siteId        String
+  site          Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  title         String
+  slug          String
+  type          PageType   @default(CUSTOM)
+  status        PageStatus @default(PUBLISHED)
+  /// Structured content blocks rendered by the (safe) rendering engine
+  content       Json       @default("[]")
+  seoTitle      String     @default("")
+  seoDescription String    @default("")
+  order         Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([siteId, slug])
+  @@index([siteId])
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  siteId      String
+  site        Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String    @default("")
+  order       Int       @default(0)
+  articles    Article[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([siteId, slug])
+  @@index([siteId])
+}
+
+enum ArticleStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+}
+
+model Article {
+  id             String        @id @default(cuid())
+  siteId         String
+  site           Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  categoryId     String?
+  category       Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  title          String
+  slug           String
+  excerpt        String        @default("")
+  /// Markdown body rendered by the safe rendering engine (never executable code)
+  content        String        @default("")
+  status         ArticleStatus @default(DRAFT)
+  tags           String[]      @default([])
+  author         String        @default("SitePilot AI")
+  language       String        @default("en")
+
+  seoTitle       String        @default("")
+  seoDescription String        @default("")
+  canonicalUrl   String        @default("")
+  featuredImage  String        @default("")
+
+  sources        ContentSource[]
+  research       ResearchItem[]
+
+  wordCount     Int       @default(0)
+  scheduledAt   DateTime?
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  analytics     AnalyticsDaily[]
+  SeoIssues     SeoIssue[]
+
+  @@unique([siteId, slug])
+  @@index([siteId, status])
+}
+
+model ContentSource {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  articleId String?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  title     String
+  url       String   @default("")
+  snippet   String   @default("")
+  provider  String   @default("mock") // mock | serpapi | custom
+  isMock    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([articleId])
+  @@index([siteId])
+}
+
+model ResearchItem {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  articleId String?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  topic     String
+  query     String
+  notes     Json     @default("[]")
+  provider  String   @default("mock")
+  isMock    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String   @default("")
+  kind      String   @default("image") // image | cover | avatar
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+}
+
+// ---------------------------------------------------------------------------
+// Agent runtime
+// ---------------------------------------------------------------------------
+
+enum TaskType {
+  GENERATE_BLUEPRINT
+  GENERATE_CONTENT_PLAN
+  GENERATE_PAGES
+  RESEARCH_TOPIC
+  GENERATE_ARTICLE
+  EDIT_ARTICLE
+  SEO_AUDIT
+  UPDATE_ARTICLE
+  PUBLISH_ARTICLE
+  ANALYZE_SITE
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model AgentTask {
+  id          String     @id @default(cuid())
+  siteId      String
+  site        Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  type        TaskType
+  status      TaskStatus @default(QUEUED)
+  priority    Int        @default(100)
+  /// How many times this task has been claimed (retry counter)
+  attempts    Int        @default(0)
+  /// Validated task input (plain data — never executable code)
+  input       Json       @default("{}")
+  output      Json?
+  error       String?
+  scheduledAt DateTime   @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  runs        AgentRun[]
+
+  @@index([status, scheduledAt])
+  @@index([siteId, createdAt])
+}
+
+enum RunStatus {
+  SUCCESS
+  FAILED
+}
+
+model AgentRun {
+  id             String    @id @default(cuid())
+  siteId         String
+  site           Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  taskId         String?
+  task           AgentTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  agent          String
+  model          String    @default("")
+  status         RunStatus
+  startedAt      DateTime
+  finishedAt     DateTime?
+  durationMs     Int       @default(0)
+  promptTokens   Int       @default(0)
+  outputTokens   Int       @default(0)
+  /// Short, non-sensitive summary of what went in / came out
+  inputSummary   String    @default("")
+  outputSummary  String    @default("")
+  error          String?
+  isDemo         Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([taskId])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics & SEO
+// ---------------------------------------------------------------------------
+
+model AnalyticsDaily {
+  id         String   @id @default(cuid())
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  articleId  String?
+  article    Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  date       DateTime
+  pageViews  Int      @default(0)
+  visits     Int      @default(0)
+  /// "internal" = measured, "demo" = development sample data (never presented as real)
+  source     String   @default("internal")
+  createdAt  DateTime @default(now())
+
+  @@unique([siteId, articleId, date])
+  @@index([siteId, date])
+}
+
+model SeoIssue {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  articleId String?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  pageId    String?
+  type      String // missing_title | missing_description | missing_h1 | broken_link | missing_canonical | duplicate_slug | long_slug
+  severity  String   @default("warning") // info | warning | error
+  message   String
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([siteId, resolved])
+}

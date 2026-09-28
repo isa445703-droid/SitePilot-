@@ -1,0 +1,35 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+
+# environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# local database
+.data/
+*.tsbuildinfo
+next-env.d.ts
+
+# editors / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# tooling / agent state
+.opencode/
+
+# python artifacts (if any helper scripts reappear)
+__pycache__/
+*.pyc
+
+# local toolchain archives
+foundry.zip
+foundryup.exe
+foundryup-init.sh
