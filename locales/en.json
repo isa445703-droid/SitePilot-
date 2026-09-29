@@ -99,7 +99,20 @@
     "demoTitle": "Demo account",
     "demoBody": "Use demo@sitepilot.dev / sitepilot-demo in development.",
     "logout": "Sign out",
-    "signedOut": "You have been signed out."
+    "signedOut": "You have been signed out.",
+    "signedIn": "Sign in",
+    "confirmEmail": {
+      "subject": "Confirm your email address",
+      "title": "Confirm your email, {{name}}",
+      "description": "Click the button below to verify your email address and start using SitePilot.",
+      "sent": "Confirmation email sent!",
+      "success": "Email confirmed. You can sign in now.",
+      "cta": "Verify email address",
+      "expires": "This link expires in {{hours}} hours.",
+      "error": {
+        "invalid": "Invalid or expired confirmation token."
+      }
+    }
   },
   "landing": {
     "hero": {
@@ -547,6 +560,8 @@
     "plan": "Plan",
     "billing": "Billing",
     "billingSoon": "Stripe billing is architecture-ready and not enabled in the MVP.",
+    "pastDue": "Past due",
+    "manageSubscription": "Manage subscription",
     "aiProvider": "AI provider",
     "aiConfigured": "Mistral API key is configured.",
     "aiMissing": "AI provider is not configured.",
@@ -555,6 +570,19 @@
     "danger": "Danger zone",
     "signOutAll": "Sign out",
     "saved": "Settings saved"
+  },
+  "pricing": {
+    "title": "Choose a plan",
+    "subtitle": "Start your free trial and grow with us as your site grows.",
+    "freePlan": "Free",
+    "freeDesc": "Perfect for getting started — build one site with basic features.",
+    "starterPlan": "Starter",
+    "starterDesc": "Ideal for personal projects — unlimited sites and full features.",
+    "proPlan": "Pro",
+    "proDesc": "For power users — unlimited everything and priority support.",
+    "startFree": "Start Free Trial",
+    "startStarter": "Get Starter",
+    "startPro": "Get Pro"
   },
   "siteSettings": {
     "title": "Site settings",
@@ -661,5 +689,32 @@
   },
   "footer": {
     "product": "SitePilot — AI website operating system"
+  },
+  "legal": {
+    "updated": "Last updated: {{date}}",
+    "terms": {
+      "title": "Terms of Service",
+      "intro": "These terms govern your use of SitePilot. By creating an account or using the service you agree to them.",
+      "h1": "1. Acceptance",
+      "b1": "SitePilot is provided as an MVP/demo product: features may change and the service may be modified or discontinued at any time. You must be an adult in your jurisdiction to use it.",
+      "h2": "2. Your account",
+      "b2": "Keep your credentials confidential and give accurate registration data. You are responsible for everything that happens under your account, including content created with AI assistance. The shared demo account exists for evaluation only.",
+      "h3": "3. Content and AI output",
+      "b3": "You keep ownership of the content you create and publish. AI-generated text, images and metadata are drafts: they can be inaccurate or incomplete, so review and fact-check anything before publishing it.",
+      "h4": "4. Acceptable use, availability and liability",
+      "b4": "Do not use SitePilot for unlawful content, to infringe third-party rights, or to abuse the AI and hosting infrastructure. The service is provided as is, without warranties; to the maximum extent permitted by law we are not liable for indirect or consequential damages arising from its use."
+    },
+    "privacy": {
+      "title": "Privacy Policy",
+      "intro": "This policy explains what personal data SitePilot processes and why.",
+      "h1": "1. Data we collect",
+      "b1": "Account details you provide (email, name), the sites and content you create, and technical logs such as IP address, user agent and timestamps used for security and rate limiting.",
+      "h2": "2. How we use it",
+      "b2": "To run the service, generate and publish the content you request, send transactional email such as address confirmation, and keep the platform secure. We do not sell personal data.",
+      "h3": "3. Processors",
+      "b3": "Data is processed by the providers that run SitePilot: a hosted Postgres database (Neon), the AI provider used for generation (Mistral), the transactional email provider (Resend) and the payment provider (Stripe) when billing is enabled. They process data only on our instructions.",
+      "h4": "4. Retention, your rights and contact",
+      "b4": "We keep account data while your account is active and delete it on request. You can ask for access, correction or deletion of your data at any time. Contact the project team through the repository where SitePilot is published."
+    }
   }
 }

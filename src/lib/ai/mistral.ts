@@ -54,16 +54,24 @@ export class AiResponseError extends Error {
   /** HTTP-ish status for the API envelope: 429 for provider rate limits, else 502. */
   readonly status: number;
   readonly code: string;
+  /**
+   * Tokens already burned by the attempts that ended in this failure. A failed
+   * completion is still a billed completion, so the caller adds it to the
+   * usage ledger instead of losing it.
+   */
+  readonly usage?: AiUsage;
   constructor(
     message: string,
     userMessage = "The AI returned an unexpected response. Please try again.",
     providerStatus?: number,
+    usage?: AiUsage,
   ) {
     super(message);
     this.name = "AiResponseError";
     this.userMessage = userMessage;
     this.status = providerStatus === 429 ? 429 : 502;
     this.code = providerStatus === 429 ? "RATE_LIMITED" : "AI_RESPONSE_ERROR";
+    this.usage = usage;
   }
 }
 
@@ -72,6 +80,19 @@ export function isAiConfigured(): boolean {
 }
 
 const EMPTY_USAGE: AiUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+/**
+ * Sums two usage reports. Every attempt of a structured completion is a
+ * separate billed call, so the ledger has to add them up — keeping only the
+ * last one silently hid the tokens spent on the attempts that failed.
+ */
+export function addUsage(left: AiUsage, right: AiUsage): AiUsage {
+  return {
+    promptTokens: left.promptTokens + right.promptTokens,
+    completionTokens: left.completionTokens + right.completionTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+  };
+}
 
 type ChatResponse = {
   choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
@@ -226,7 +247,7 @@ export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: 
       options.timeoutMs ?? 60_000,
     );
 
-    usage = readUsage(json);
+    usage = addUsage(usage, readUsage(json));
     const choice = json.choices?.[0];
     const raw = choice?.message?.content?.trim() ?? "";
 
@@ -241,6 +262,8 @@ export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: 
       throw new AiResponseError(
         `Structured output still truncated at ${maxTokens} tokens`,
         "The AI response was cut off before it finished. Please retry.",
+        undefined,
+        usage,
       );
     }
 
@@ -283,5 +306,7 @@ export async function generateStructuredOutput<S extends z.ZodTypeAny>(options: 
     truncatedEnding
       ? "The AI response was cut off before it finished. Please retry."
       : "The AI response did not match the expected structure. Please try again.",
+    undefined,
+    usage,
   );
 }

@@ -4,12 +4,10 @@ out/
 build/
 coverage/
 
-# environment
+# environment — every real .env* holds secrets; the example file stays tracked
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
 
 # local database
 .data/
@@ -35,4 +33,3 @@ foundryup.exe
 foundryup-init.sh
 
 .vercel
-.env*

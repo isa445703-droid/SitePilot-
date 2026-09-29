@@ -5,6 +5,7 @@ import { slugify, uniqueSlug } from "@/lib/utils/slug";
 import { withAgentRun, type AgentRunResult } from "./run";
 import { assertPermission } from "./permissions";
 import { loadSiteBundle } from "./context";
+import { PermanentTaskError } from "./task-policy";
 
 export type SeoIssueDraft = {
   type:
@@ -259,8 +260,10 @@ export async function runSeoAgent(input: {
     async (ctx) => {
       const bundle = await loadSiteBundle("seo", input.siteId);
       const article = await db.article.findUnique({ where: { id: input.articleId } });
-      if (!article) throw new Error("Article not found");
-      if (article.siteId !== input.siteId) throw new Error("Article does not belong to this site");
+      if (!article) throw new PermanentTaskError("Article not found", 404);
+      if (article.siteId !== input.siteId) {
+        throw new PermanentTaskError("Article does not belong to this site", 403);
+      }
 
       const outcome = await generateSeo({
         title: article.title,

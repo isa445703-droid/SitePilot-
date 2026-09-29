@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db/prisma";
+import { logger } from "@/lib/logger";
 
 /**
  * Analytics abstraction.
@@ -192,20 +193,36 @@ export async function getSiteAnalytics(siteId: string, days: number): Promise<An
   return report;
 }
 
-/** Records a real page view (called after the preview response is sent). */
+/**
+ * Records a real page view (called after the preview response is sent).
+ *
+ * The row lookup and the bump happen inside a short transaction that opens
+ * with a per (site, page, day) advisory lock. `@@unique([siteId, articleId,
+ * date])` cannot enforce "one row per day" on its own: PostgreSQL treats NULLs
+ * as distinct, so for site-level rows (articleId = null) a conflict never fires
+ * and two concurrent first views used to insert two rows for the same day. The
+ * lock closes that window, and the matching create-vs-create race on article
+ * rows, without changing the schema — Prisma 6 cannot express the partial
+ * unique index that would do it at the database level.
+ */
 export async function recordPageView(siteId: string, articleId?: string | null): Promise<void> {
   const today = dateKey(new Date());
+  const lockKey = `${siteId}:${articleId ?? "site"}:${today.toISOString()}`;
   try {
-    const existing = await db.analyticsDaily.findFirst({
-      where: { siteId, articleId: articleId ?? null, date: today, source: "internal" },
-    });
-    if (existing) {
-      await db.analyticsDaily.update({
-        where: { id: existing.id },
-        data: { pageViews: { increment: 1 }, visits: { increment: 1 } },
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey})::bigint)`;
+
+      const existing = await tx.analyticsDaily.findFirst({
+        where: { siteId, articleId: articleId ?? null, date: today, source: "internal" },
       });
-    } else {
-      await db.analyticsDaily.create({
+      if (existing) {
+        await tx.analyticsDaily.update({
+          where: { id: existing.id },
+          data: { pageViews: { increment: 1 }, visits: { increment: 1 } },
+        });
+        return;
+      }
+      await tx.analyticsDaily.create({
         data: {
           siteId,
           articleId: articleId ?? null,
@@ -215,8 +232,10 @@ export async function recordPageView(siteId: string, articleId?: string | null):
           source: "internal",
         },
       });
-    }
-  } catch {
-    // Analytics must never break rendering.
+    });
+  } catch (error) {
+    // Analytics must never break rendering — but swallowing it silently made
+    // missing counters impossible to debug, so the failure is logged.
+    logger.warn("analytics_record_failed", { siteId, error: String(error) });
   }
 }

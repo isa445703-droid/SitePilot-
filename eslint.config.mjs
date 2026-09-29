@@ -20,7 +20,8 @@ const eslintConfig = [
       "next-env.d.ts",
       "prisma/generated/**",
       "coverage/**",
-      "BSC_Security_Audit/**",
+      // CommonJS helper scripts are legitimately require()-based.
+      "**/*.cjs",
     ],
   },
   {

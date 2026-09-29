@@ -43,7 +43,11 @@ export function AccountSettings({
   organization,
 }: {
   user: { id: string; name: string | null; email: string };
-  organization: { name: string; role: string } | null;
+  organization: {
+    name: string;
+    role: string;
+    subscription?: { plan: string; status: string } | null;
+  } | null;
 }) {
   const t = useT();
   const router = useRouter();
@@ -95,16 +99,37 @@ export function AccountSettings({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="surface-2 p-3 text-sm">
-            <p className="font-medium">{t("settings.plan")}</p>
-            <p className="mt-0.5 text-muted">{t("settings.billingSoon")}</p>
+        {organization ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="surface-2 p-3 text-sm">
+              <p className="font-medium">{t("settings.plan")}</p>
+              <p className="mt-0.5 text-muted">
+                {organization.subscription?.plan?.toLowerCase() || "FREE"}
+              </p>
+            </div>
+            <div className="surface-2 p-3 text-sm">
+              <p className="font-medium">{t("settings.billing")}</p>
+              {organization.subscription?.status === "ACTIVE"
+                ? <p className="mt-0.5 text-success">Active</p>
+                : <p className="mt-0.5 text-muted">{t("settings.pastDue")}</p>
+              }
+            </div>
           </div>
-          <div className="surface-2 p-3 text-sm">
-            <p className="font-medium">{t("settings.billing")}</p>
-            <p className="mt-0.5 text-muted">{t("settings.billingSoon")}</p>
+        ) : null}
+
+        {organization?.subscription?.plan === "STARTER" || organization?.subscription?.plan === "PRO" ? (
+          <div className="mt-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                // TODO: Open manage subscription portal
+              }}
+            >
+              {t("settings.manageSubscription")}
+            </Button>
           </div>
-        </div>
+        ) : null}
 
         <Button variant="primary" loading={busy} onClick={save}>
           {busy ? t("common.saving") : t("common.save")}

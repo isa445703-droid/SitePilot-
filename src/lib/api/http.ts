@@ -99,6 +99,25 @@ function toApiFailure(error: unknown): { status: number } & ApiFailure {
   if (error instanceof AccessError) {
     return { status: 403, ok: false, error: { code: "FORBIDDEN", message: error.message } };
   }
+  // Permanent failures (PermanentTaskError): report the status they carry
+  // (404/403/409) instead of falling through to a generic 500.
+  const marked = error as { permanent?: unknown; status?: unknown; message?: unknown };
+  if (marked?.permanent === true) {
+    const status = typeof marked.status === "number" ? marked.status : 400;
+    const code =
+      status === 404
+        ? "NOT_FOUND"
+        : status === 403
+          ? "FORBIDDEN"
+          : status === 409
+            ? "CONFLICT"
+            : "INVALID_REQUEST";
+    return {
+      status,
+      ok: false,
+      error: { code, message: typeof marked.message === "string" ? marked.message : "Request failed." },
+    };
+  }
   // Typed AI errors carry a user-safe message; they must be handled before the
   // generic `{ status, code, message }` shape below, or the raw provider detail
   // (which can include upstream response bodies) would be sent to the client.

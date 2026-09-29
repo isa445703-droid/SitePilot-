@@ -33,6 +33,9 @@ export const env = {
   get stripeSecretKey() {
     return read("STRIPE_SECRET_KEY");
   },
+  get stripeWebhookSecret() {
+    return read("STRIPE_WEBHOOK_SECRET");
+  },
 };
 
 /**

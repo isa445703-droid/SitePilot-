@@ -5,6 +5,7 @@ import { countWords } from "@/lib/utils/slug";
 import { withAgentRun, type AgentRunResult } from "./run";
 import { assertPermission } from "./permissions";
 import { brandVoiceOf, loadSiteBundle } from "./context";
+import { PermanentTaskError } from "./task-policy";
 
 export type EditorAgentInput = {
   siteId: string;
@@ -41,8 +42,10 @@ export async function runEditorAgent(
     async (ctx) => {
       const bundle = await loadSiteBundle("editor", input.siteId);
       const article = await db.article.findUnique({ where: { id: input.articleId } });
-      if (!article) throw new Error("Article not found");
-      if (article.siteId !== input.siteId) throw new Error("Article does not belong to this site");
+      if (!article) throw new PermanentTaskError("Article not found", 404);
+      if (article.siteId !== input.siteId) {
+        throw new PermanentTaskError("Article does not belong to this site", 403);
+      }
 
       const outcome = await reviseArticle({
         title: article.title,

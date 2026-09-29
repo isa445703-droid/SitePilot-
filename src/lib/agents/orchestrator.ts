@@ -15,7 +15,7 @@ import { runSeoAgent, runSeoAudit } from "./seo";
 import { runWriterAgent } from "./writer";
 import { assertPermission } from "./permissions";
 import { loadSiteBundle } from "./context";
-import { MAX_TASK_ATTEMPTS, isRetryableTaskError, retryDelayMs } from "./task-policy";
+import { MAX_TASK_ATTEMPTS, PermanentTaskError, isRetryableTaskError, retryDelayMs } from "./task-policy";
 import { scheduleNextPublication } from "@/lib/scheduler";
 
 /* -------------------------------------------------------------------------- */
@@ -89,163 +89,181 @@ export type ProvisionResult = {
 /**
  * Creates the structural part of a site (categories, pages, brand, design,
  * settings, schedule) and queues the first tasks. The blueprint itself is
- * already Zod-validated by the caller.
+ * already Zod-validated by the caller. Runs in a single transaction: either
+ * the site is fully provisioned, or nothing was written at all.
  */
 export async function provisionSiteFromBlueprint(
   siteId: string,
   blueprint: Blueprint,
   options: { timezone?: string } = {},
 ): Promise<ProvisionResult> {
-  const site = await db.site.findUnique({ where: { id: siteId } });
-  if (!site) throw new Error("Site not found");
+  // One atomic unit: a crash half-way through must not leave a site with
+  // categories but no pages, or a queued content plan whose brand row is
+  // missing. On failure everything rolls back and the caller can simply retry
+  // — there is nothing to clean up by hand.
+  const result = await db.$transaction(
+    async (tx) => {
+      const site = await tx.site.findUnique({ where: { id: siteId } });
+      if (!site) throw new PermanentTaskError("Site not found", 404);
 
-  const categories: string[] = [];
-  for (const [index, category] of blueprint.categories.entries()) {
-    const slug = uniqueSlug(
-      slugify(category.name, `category-${index + 1}`),
-      categories,
-    );
-    categories.push(slug);
-    await db.category.create({
-      data: {
-        siteId,
-        name: category.name,
-        slug,
-        description: category.description,
-        order: index,
-      },
-    });
-  }
+      const categories: string[] = [];
+      for (const [index, category] of blueprint.categories.entries()) {
+        const slug = uniqueSlug(
+          slugify(category.name, `category-${index + 1}`),
+          categories,
+        );
+        categories.push(slug);
+        await tx.category.create({
+          data: {
+            siteId,
+            name: category.name,
+            slug,
+            description: category.description,
+            order: index,
+          },
+        });
+      }
 
-  const pages: string[] = [];
-  for (const [index, page] of blueprint.pages.entries()) {
-    const slug = index === 0 ? "" : uniqueSlug(slugify(page.slug || page.title, "page"), pages);
-    pages.push(slug);
-    await db.page.create({
-      data: {
-        siteId,
-        title: page.title,
-        slug,
-        type: index === 0 ? "HOME" : page.slug === "about" ? "ABOUT" : page.slug === "contact" ? "CONTACT" : "CUSTOM",
-        status: "PUBLISHED",
-        content: [
-          { type: "heading", level: 1, text: page.title },
-          { type: "paragraph", text: page.purpose || blueprint.description },
-        ] as any,
-        seoTitle: page.title.slice(0, 60),
-        seoDescription: (page.purpose || blueprint.description).slice(0, 155),
-        order: index,
-      },
-    });
-  }
+      const pages: string[] = [];
+      for (const [index, page] of blueprint.pages.entries()) {
+        const slug = index === 0 ? "" : uniqueSlug(slugify(page.slug || page.title, "page"), pages);
+        pages.push(slug);
+        await tx.page.create({
+          data: {
+            siteId,
+            title: page.title,
+            slug,
+            type: index === 0 ? "HOME" : page.slug === "about" ? "ABOUT" : page.slug === "contact" ? "CONTACT" : "CUSTOM",
+            status: "PUBLISHED",
+            content: [
+              { type: "heading", level: 1, text: page.title },
+              { type: "paragraph", text: page.purpose || blueprint.description },
+            ] as any,
+            seoTitle: page.title.slice(0, 60),
+            seoDescription: (page.purpose || blueprint.description).slice(0, 155),
+            order: index,
+          },
+        });
+      }
 
-  const brand = blueprint.tone || "";
-  await db.siteBrand.upsert({
-    where: { siteId },
-    create: {
-      siteId,
-      brandVoice: brand,
-      tone: brand,
-      guidelines: `${blueprint.description}`,
-      keywords: blueprint.seoStrategy.keywords,
-      audienceNotes: blueprint.targetAudience,
-    },
-    update: {
-      brandVoice: brand,
-      tone: brand,
-      guidelines: `${blueprint.description}`,
-      keywords: blueprint.seoStrategy.keywords,
-      audienceNotes: blueprint.targetAudience,
-    },
-  });
+      const brand = blueprint.tone || "";
+      await tx.siteBrand.upsert({
+        where: { siteId },
+        create: {
+          siteId,
+          brandVoice: brand,
+          tone: brand,
+          guidelines: `${blueprint.description}`,
+          keywords: blueprint.seoStrategy.keywords,
+          audienceNotes: blueprint.targetAudience,
+        },
+        update: {
+          brandVoice: brand,
+          tone: brand,
+          guidelines: `${blueprint.description}`,
+          keywords: blueprint.seoStrategy.keywords,
+          audienceNotes: blueprint.targetAudience,
+        },
+      });
 
-  const design = blueprint.design;
-  await db.siteDesign.upsert({
-    where: { siteId },
-    create: {
-      siteId,
-      primaryColor: design.primaryColor,
-      secondaryColor: design.secondaryColor,
-      surfaceColor: design.surfaceColor,
-      backgroundColor: design.backgroundColor,
-      textColor: design.textColor,
-      mutedColor: design.mutedColor,
-      fontStyle: design.fontStyle,
-      layoutStyle: design.layoutStyle,
-      cardStyle: design.cardStyle,
-      borderRadius: design.borderRadius,
-      headerStyle: design.headerStyle,
-      heroStyle: design.heroStyle,
-      cardDensity: design.cardDensity,
-    },
-    update: {},
-  });
+      const design = blueprint.design;
+      await tx.siteDesign.upsert({
+        where: { siteId },
+        create: {
+          siteId,
+          primaryColor: design.primaryColor,
+          secondaryColor: design.secondaryColor,
+          surfaceColor: design.surfaceColor,
+          backgroundColor: design.backgroundColor,
+          textColor: design.textColor,
+          mutedColor: design.mutedColor,
+          fontStyle: design.fontStyle,
+          layoutStyle: design.layoutStyle,
+          cardStyle: design.cardStyle,
+          borderRadius: design.borderRadius,
+          headerStyle: design.headerStyle,
+          heroStyle: design.heroStyle,
+          cardDensity: design.cardDensity,
+        },
+        update: {},
+      });
 
-  await db.siteSettings.upsert({
-    where: { siteId },
-    create: {
-      siteId,
-      siteTitle: blueprint.siteName,
-      metaDescription: blueprint.description.slice(0, 155),
-    },
-    update: {
-      siteTitle: blueprint.siteName,
-      metaDescription: blueprint.description.slice(0, 155),
-    },
-  });
+      await tx.siteSettings.upsert({
+        where: { siteId },
+        create: {
+          siteId,
+          siteTitle: blueprint.siteName,
+          metaDescription: blueprint.description.slice(0, 155),
+        },
+        update: {
+          siteTitle: blueprint.siteName,
+          metaDescription: blueprint.description.slice(0, 155),
+        },
+      });
 
-  await db.publishingSchedule.upsert({
-    where: { siteId },
-    create: {
-      siteId,
-      frequency: blueprint.publishingFrequency,
-      timezone: options.timezone || site.timezone || "UTC",
-      publishHour: site.publishHour ?? 9,
-      enabled: false,
-    },
-    update: {
-      frequency: blueprint.publishingFrequency,
-      timezone: options.timezone || site.timezone || undefined,
-    },
-  });
+      await tx.publishingSchedule.upsert({
+        where: { siteId },
+        create: {
+          siteId,
+          frequency: blueprint.publishingFrequency,
+          timezone: options.timezone || site.timezone || "UTC",
+          publishHour: site.publishHour ?? 9,
+          enabled: false,
+        },
+        update: {
+          frequency: blueprint.publishingFrequency,
+          timezone: options.timezone || site.timezone || undefined,
+        },
+      });
 
-  const planTask = await db.agentTask.create({
-    data: {
-      siteId,
-      type: "GENERATE_CONTENT_PLAN",
-      status: "QUEUED",
-      scheduledAt: new Date(),
-      input: { count: 9, queueArticles: false, initial: true } as any,
-      priority: 10,
-    },
-  });
+      const planTask = await tx.agentTask.create({
+        data: {
+          siteId,
+          type: "GENERATE_CONTENT_PLAN",
+          status: "QUEUED",
+          scheduledAt: new Date(),
+          input: { count: 9, queueArticles: false, initial: true } as any,
+          priority: 10,
+        },
+      });
 
-  const pagesTask = await db.agentTask.create({
-    data: {
-      siteId,
-      type: "GENERATE_PAGES",
-      status: "QUEUED",
-      scheduledAt: new Date(),
-      input: {} as any,
-      priority: 15,
-    },
-  });
+      const pagesTask = await tx.agentTask.create({
+        data: {
+          siteId,
+          type: "GENERATE_PAGES",
+          status: "QUEUED",
+          scheduledAt: new Date(),
+          input: {} as any,
+          priority: 15,
+        },
+      });
 
-  await db.site.update({
-    where: { id: siteId },
-    data: {
-      name: blueprint.siteName,
-      description: blueprint.description,
-      targetAudience: blueprint.targetAudience,
-      primaryGoal: blueprint.primaryGoal,
-      language: blueprint.language,
-      tone: blueprint.tone,
-      frequency: blueprint.publishingFrequency,
-      status: "BUILDING",
-    },
-  });
+      await tx.site.update({
+        where: { id: siteId },
+        data: {
+          name: blueprint.siteName,
+          description: blueprint.description,
+          targetAudience: blueprint.targetAudience,
+          primaryGoal: blueprint.primaryGoal,
+          language: blueprint.language,
+          tone: blueprint.tone,
+          frequency: blueprint.publishingFrequency,
+          status: "BUILDING",
+        },
+      });
 
-  return { categories: categories.length, pages: pages.length, taskIds: [planTask.id, pagesTask.id] };
+      return {
+        categories: categories.length,
+        pages: pages.length,
+        taskIds: [planTask.id, pagesTask.id],
+      };
+    },
+    // Provisioning touches ~20 rows across 9 tables; the default 5s budget is
+    // too tight for a cold connection pool.
+    { maxWait: 10_000, timeout: 60_000 },
+  );
+
+  return result;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -272,7 +290,7 @@ export type TaskOutcome = {
 };
 
 /** Claims per task before it is failed for good. */
-export { MAX_TASK_ATTEMPTS, isRetryableTaskError, retryDelayMs } from "./task-policy";
+export { MAX_TASK_ATTEMPTS, PermanentTaskError, isRetryableTaskError, retryDelayMs } from "./task-policy";
 
 /**
  * Executes one queued task. The orchestrator only ever runs validated data
@@ -462,7 +480,7 @@ async function dispatch(
         researchText,
         status: parsed.initial ? "PUBLISHED" : "DRAFT",
       });
-      if (!written.ok) throw new Error(written.error);
+      if (!written.ok) throwAgentFailure(written);
       const articleId = written.value.articleId;
 
       if (researchId) {
@@ -547,7 +565,7 @@ async function dispatch(
         mode: "edit",
         instruction: parsed.instruction,
       });
-      if (!edited.ok) throw new Error(edited.error);
+      if (!edited.ok) throwAgentFailure(edited);
       let seo = null;
       if (parsed.refreshSeo) {
         const result = await runSeoAgent({ siteId, taskId, articleId: parsed.articleId });
@@ -583,7 +601,8 @@ async function dispatch(
 
     default: {
       const exhaustive: never = type;
-      throw new Error(`Unknown task type: ${String(exhaustive)}`);
+      // Programming error: retrying would fail the same way every time.
+      throw new PermanentTaskError(`Unknown task type: ${String(exhaustive)}`);
     }
   }
 }

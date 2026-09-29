@@ -2,8 +2,9 @@ import "server-only";
 import { db } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { aiConfig } from "@/lib/env";
-import { AiNotConfiguredError, AiResponseError, type AiUsage } from "@/lib/ai/mistral";
+import { AiNotConfiguredError, AiResponseError, addUsage, type AiUsage } from "@/lib/ai/mistral";
 import { ApiError } from "@/lib/api/http";
+import { PermanentTaskError } from "./task-policy";
 import type { AgentName } from "./permissions";
 
 /**
@@ -24,6 +25,8 @@ export type AgentRunSuccess<T> = { ok: true; value: T; runId: string; isDemo: bo
 /**
  * Failures stay data. When the cause is a typed AI/provider error we keep its
  * status + code so API routes can answer 429/502/503 instead of a generic 500.
+ * `permanent` marks failures that a retry can never fix (missing record, wrong
+ * owner, archived content) so the task policy fails the task immediately.
  */
 export type AgentRunFailure = {
   ok: false;
@@ -32,6 +35,7 @@ export type AgentRunFailure = {
   status?: number;
   code?: string;
   userMessage?: string;
+  permanent?: boolean;
 };
 export type AgentRunResult<T> = AgentRunSuccess<T> | AgentRunFailure;
 
@@ -41,11 +45,20 @@ export function throwAgentFailure(failure: {
   status?: number;
   code?: string;
   userMessage?: string;
+  permanent?: boolean;
 }): never {
-  if (failure.status && failure.code) {
-    throw new ApiError(failure.status, failure.code, failure.userMessage ?? failure.error ?? "Request failed.");
+  const message = failure.userMessage ?? failure.error ?? "Request failed.";
+  if (failure.permanent) {
+    throw new PermanentTaskError(message, failure.status);
   }
-  throw new Error(failure.error ?? "Request failed.");
+  if (failure.status && failure.code) {
+    throw new ApiError(failure.status, failure.code, message);
+  }
+  if (typeof failure.status === "number") {
+    // Keep the status visible to the retry policy (4xx ⇒ permanent, 5xx ⇒ retry).
+    throw Object.assign(new Error(message), { status: failure.status });
+  }
+  throw new Error(message);
 }
 
 function summarize(value: unknown, max = 240): string {
@@ -95,15 +108,31 @@ export async function withAgentRun<T>(
     taskId: options.taskId,
     agent: options.agent,
     recordUsage: (u) => {
-      usage = {
-        promptTokens: usage.promptTokens + u.promptTokens,
-        completionTokens: usage.completionTokens + u.completionTokens,
-        totalTokens: usage.totalTokens + u.totalTokens,
-      };
+      usage = addUsage(usage, u);
     },
     setDemo: (value) => {
       isDemo = value;
     },
+  };
+
+  /**
+   * A failed run is billed just like a successful one, so the usage ledger is
+   * written on both paths — it used to be written only on success and quietly
+   * under-reported the tokens an expensive, failing agent consumed.
+   */
+  const persistUsageEvent = async (tokens: AiUsage) => {
+    if (tokens.totalTokens <= 0) return;
+    await db.usageEvent
+      .create({
+        data: {
+          siteId: options.siteId,
+          agent: options.agent,
+          model: isDemo ? "demo" : options.model ?? aiConfig.model,
+          promptTokens: tokens.promptTokens,
+          outputTokens: tokens.completionTokens,
+        },
+      })
+      .catch((error) => logger.warn("usage_event_failed", { error: String(error) }));
   };
 
   try {
@@ -125,19 +154,7 @@ export async function withAgentRun<T>(
       },
     });
 
-    if (usage.totalTokens > 0) {
-      await db.usageEvent
-        .create({
-          data: {
-            siteId: options.siteId,
-            agent: options.agent,
-            model: isDemo ? "demo" : options.model ?? aiConfig.model,
-            promptTokens: usage.promptTokens,
-            outputTokens: usage.completionTokens,
-          },
-        })
-        .catch((error) => logger.warn("usage_event_failed", { error: String(error) }));
-    }
+    await persistUsageEvent(usage);
 
     logger.info("agent_run_completed", {
       agent: options.agent,
@@ -156,6 +173,10 @@ export async function withAgentRun<T>(
     const message =
       error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
 
+    // Tokens spent by the attempts that failed travel on the error itself, so
+    // a run that dies after three expensive retries still shows up in full.
+    if (error instanceof AiResponseError && error.usage) usage = addUsage(usage, error.usage);
+
     await db.agentRun
       .update({
         where: { id: run.id },
@@ -170,6 +191,8 @@ export async function withAgentRun<T>(
         },
       })
       .catch(() => undefined);
+
+    await persistUsageEvent(usage);
 
     logger.error("agent_run_failed", {
       agent: options.agent,
@@ -194,6 +217,21 @@ export async function withAgentRun<T>(
       };
     }
 
-    return { ok: false, error: message, runId: run.id };
+    // Any other typed failure keeps its status/code/permanence so the caller
+    // (and the task retry policy) sees the real class of the error instead of
+    // a bare message that would be retried three times.
+    const typed = error as { status?: unknown; code?: unknown; permanent?: unknown };
+    const status = typeof typed?.status === "number" ? typed.status : undefined;
+    const code = typeof typed?.code === "string" ? typed.code : undefined;
+    const permanent = typed?.permanent === true;
+
+    return {
+      ok: false,
+      error: message,
+      runId: run.id,
+      ...(status !== undefined ? { status } : {}),
+      ...(code !== undefined ? { code } : {}),
+      ...(permanent ? { permanent: true } : {}),
+    };
   }
 }

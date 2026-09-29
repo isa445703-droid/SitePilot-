@@ -106,9 +106,12 @@ describe("runDueTasks accounting", () => {
 
     const result = await runDueTasks();
 
-    // Prisma cannot filter IS NULL, so the deadline is applied in JS: a task
-    // without a schedule counts as due instead of blocking the queue forever.
-    expect(agentTask.findMany.mock.calls.at(-1)?.[0]?.where).toEqual({ status: "QUEUED" });
+    // The deadline lives in SQL and is re-applied in JS, so a task without a
+    // usable schedule still runs instead of blocking the queue.
+    expect(agentTask.findMany.mock.calls.at(-1)?.[0]?.where).toEqual({
+      status: "QUEUED",
+      scheduledAt: { lte: expect.any(Date) },
+    });
     expect(result).toEqual({ ran: 1, completed: 1, failed: 0, skipped: 0 });
   });
 
@@ -118,5 +121,26 @@ describe("runDueTasks accounting", () => {
 
     await expect(runDueTasks()).resolves.toEqual({ ran: 0, completed: 0, failed: 0, skipped: 0 });
     expect(orchestratorRunTask).not.toHaveBeenCalled();
+    // Future work is excluded by the query itself: otherwise a site scheduling
+    // days ahead would fill the candidate window and starve everything due.
+    expect(agentTask.findMany.mock.calls.at(-1)?.[0]?.where).toEqual({
+      status: "QUEUED",
+      scheduledAt: { lte: expect.any(Date) },
+    });
+  });
+
+  it("does not let one site's backlog take the whole tick", async () => {
+    agentTask.findMany.mockResolvedValueOnce([
+      ...["a1", "a2", "a3", "a4", "a5", "a6"].map((id) => ({ id, siteId: "site-a" })),
+      { id: "b1", siteId: "site-b" },
+    ]);
+    orchestratorRunTask.mockResolvedValue({ ok: true });
+
+    const result = await runDueTasks();
+
+    const ran = orchestratorRunTask.mock.calls.map((call) => call[0] as string);
+    expect(result.ran).toBe(5);
+    expect(ran).toContain("b1");
+    expect(ran.filter((id) => id.startsWith("a"))).toHaveLength(4);
   });
 });

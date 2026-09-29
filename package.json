@@ -1,6 +1,6 @@
 {
   "name": "sitepilot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "SitePilot — AI website operating system. Describe your website. AI runs it.",
   "scripts": {
@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "db:start": "node scripts/db.mjs",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -24,6 +25,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",
+    "@types/uuid": "^10.0.0",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "lucide-react": "^1.48.0",
@@ -31,7 +33,10 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.89.0",
+    "resend": "^3.0.0",
     "server-only": "^0.0.1",
+    "stripe": "^11.0.0",
+    "uuid": "^14.0.2",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -40,6 +45,7 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@vitest/coverage-v8": "^5.0.0",
     "embedded-postgres": "^17.10.0-beta.17",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.5.0",

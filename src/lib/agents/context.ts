@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db/prisma";
 import type { AgentName } from "./permissions";
 import { assertPermission } from "./permissions";
+import { PermanentTaskError } from "./task-policy";
 
 export type SiteBundle = {
   site: any;
@@ -28,7 +29,7 @@ export async function loadSiteBundle(agent: AgentName, siteId: string): Promise<
       _count: { select: { articles: true, tasks: true } },
     },
   });
-  if (!site) throw new Error(`Site ${siteId} not found`);
+  if (!site) throw new PermanentTaskError(`Site ${siteId} not found`, 404);
 
   const [published, queued, seoIssues] = await Promise.all([
     db.article.count({ where: { siteId, status: "PUBLISHED" } }),

@@ -337,4 +337,25 @@ describe("generateStructuredOutput", () => {
 
     await expect(run()).rejects.toThrow(/content: Required/);
   });
+
+  it("sums the usage of every attempt instead of keeping only the last", async () => {
+    const { fetchMock } = stubProvider([
+      { content: "definitely not json" },
+      { content: JSON.stringify(validArticle) },
+    ]);
+
+    const result = await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The stub bills 10/20/30 tokens per call: both attempts are paid for.
+    expect(result.usage).toEqual({ promptTokens: 20, completionTokens: 40, totalTokens: 60 });
+  });
+
+  it("carries the tokens of the failed attempts on the error it throws", async () => {
+    stubProvider([{ content: "definitely not json" }]);
+
+    await expect(run()).rejects.toMatchObject({
+      usage: { promptTokens: 30, completionTokens: 60, totalTokens: 90 },
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/guards";
 import { getOwnedSite } from "@/lib/auth/guards";
 import { db } from "@/lib/db/prisma";
@@ -14,7 +15,7 @@ export default async function SiteContentPage({ params }: Params) {
   const { siteId } = await params;
   const site = await getOwnedSite(siteId, user.id);
   const { t } = await getServerI18n();
-  if (!site) return null;
+  if (!site) notFound();
 
   const articles = await db.article.findMany({
     where: { siteId: site.id, status: { not: "ARCHIVED" } },

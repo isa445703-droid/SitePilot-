@@ -13,8 +13,8 @@ export type Messages = typeof en;
 
 export const dictionaries: Record<Locale, Messages> = {
   en,
-  ru: ru as Messages,
-  ko: ko as Messages,
+  ru: ru as unknown as Messages,
+  ko: ko as unknown as Messages,
 };
 
 export function getMessages(locale: Locale): Messages {

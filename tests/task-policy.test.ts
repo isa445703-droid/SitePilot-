@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   MAX_TASK_ATTEMPTS,
+  PermanentTaskError,
   STALE_TASK_MS,
   isRetryableTaskError,
   retryDelayMs,
@@ -34,6 +35,27 @@ describe("task retry policy", () => {
     expect(isRetryableTaskError(invalid)).toBe(false);
     expect(isRetryableTaskError(Object.assign(new Error("bad input"), { status: 400 }))).toBe(false);
     expect(isRetryableTaskError(Object.assign(new Error("no access"), { status: 403 }))).toBe(false);
+  });
+
+  it("fails permanent task errors immediately, without spending attempts", () => {
+    expect(isRetryableTaskError(new PermanentTaskError("Site not found", 404))).toBe(false);
+    expect(isRetryableTaskError(new PermanentTaskError("Article does not belong to this site", 403))).toBe(
+      false,
+    );
+    expect(isRetryableTaskError(new PermanentTaskError("Archived articles cannot be published", 409))).toBe(
+      false,
+    );
+    // No HTTP status (programming error) — still permanent.
+    expect(isRetryableTaskError(new PermanentTaskError("Unknown task type: X"))).toBe(false);
+    // An explicit permanent marker wins over a transport-looking status.
+    expect(isRetryableTaskError(Object.assign(new Error("nope"), { permanent: true }))).toBe(false);
+    expect(isRetryableTaskError(new PermanentTaskError("rate limited", 429))).toBe(false);
+  });
+
+  it("still retries transient upstream statuses", () => {
+    expect(isRetryableTaskError(Object.assign(new Error("ai down"), { status: 502 }))).toBe(true);
+    expect(isRetryableTaskError(Object.assign(new Error("not configured"), { status: 503 }))).toBe(true);
+    expect(isRetryableTaskError(new Error("ECONNRESET"))).toBe(true);
   });
 
   it("uses a stale window long enough to outlive a slow AI call", () => {

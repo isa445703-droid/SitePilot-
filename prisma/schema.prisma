@@ -21,19 +21,24 @@ enum OrgRole {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  name         String?
-  passwordHash String
+  id                String     @id @default(cuid())
+  email             String     @unique
+  name              String?
+  passwordHash      String
+  emailVerified     Boolean    @default(false)
+  emailToken        String?
+  emailTokenExpiry  DateTime?
+  passwordResetToken String?
+  passwordResetExpiry DateTime?
   // UI language preference (independent from generated site content language)
-  locale       String     @default("en")
-  theme        String     @default("system")
-  image        String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  sessions     Session[]
-  memberships  OrgMember[]
-  sites        Site[]     @relation("SiteCreator")
+  locale            String     @default("en")
+  theme             String     @default("system")
+  image             String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  sessions          Session[]
+  memberships       OrgMember[]
+  sites             Site[]     @relation("SiteCreator")
 }
 
 model Session {
@@ -47,6 +52,9 @@ model Session {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  // Purging expired sessions (and "has this session expired?" lookups) scan
+  // this column on every request cycle.
+  @@index([expiresAt])
 }
 
 model Organization {
@@ -338,7 +346,10 @@ model Article {
   SeoIssues     SeoIssue[]
 
   @@unique([siteId, slug])
-  @@index([siteId, status])
+  // Public listings filter siteId+status and order by publishedAt; related
+  // articles and category pages filter siteId+categoryId.
+  @@index([siteId, status, publishedAt])
+  @@index([siteId, categoryId])
 }
 
 model ContentSource {

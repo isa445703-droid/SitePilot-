@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
-import { MAX_TASK_ATTEMPTS, STALE_TASK_MS } from "@/lib/agents/task-policy";
+import { MAX_TASK_ATTEMPTS, STALE_TASK_MS, PermanentTaskError } from "@/lib/agents/task-policy";
 import type { PublishingFrequency } from "@prisma/client";
 
 /**
@@ -220,7 +220,7 @@ export async function enableAutopilot(
     where: { id: siteId },
     include: { schedule: true },
   });
-  if (!site) throw new Error("Site not found");
+  if (!site) throw new PermanentTaskError("Site not found", 404);
 
   const timezone = nextValidTimezone(site.timezone);
   const publishHour = site.publishHour ?? 9;
@@ -369,28 +369,57 @@ export async function scheduleNextPublication(
  */
 export type TickResult = { ran: number; completed: number; failed: number; skipped: number };
 
-/** Runs every queued task whose scheduled time has passed. */
+/**
+ * Runs every queued task whose scheduled time has passed.
+ *
+ * Two things keep the queue fair:
+ * - the deadline is applied in SQL, so a backlog of future work cannot fill
+ *   the candidate window and starve the tasks that are due right now;
+ * - candidates are spread across sites first, so a site with a deep backlog
+ *   cannot take the whole tick while every other site waits.
+ */
 export async function runDueTasks(limit = 5): Promise<TickResult> {
   // Dynamic import keeps the module graph acyclic (orchestrator imports us).
   const { runTask } = await import("@/lib/agents/orchestrator");
 
-  // Prisma cannot express `scheduledAt IS NULL` in a where clause, and a task
-  // without a schedule (manual insert, older row) would then sit in QUEUED
-  // forever. Fetch a slightly wider slice of the queue and apply the deadline
-  // here, treating a missing schedule as "run now".
+  const now = Date.now();
   const candidates = await db.agentTask.findMany({
-    where: { status: "QUEUED" },
+    // `scheduledAt` is NOT NULL (schema default `now()`), so the deadline is a
+    // plain range scan on AgentTask_status_scheduledAt — no post-filter has to
+    // throw future work away after it was fetched.
+    where: { status: "QUEUED", scheduledAt: { lte: new Date(now) } },
     orderBy: [{ priority: "desc" }, { scheduledAt: "asc" }],
-    take: limit * 4,
+    take: limit * 8,
+    select: { id: true, siteId: true, scheduledAt: true },
   });
 
-  const now = Date.now();
-  const due = candidates
-    .filter((task) => !task.scheduledAt || task.scheduledAt.getTime() <= now)
-    .slice(0, limit);
+  // Defensive re-check: a malformed row (or a db stub in tests) must not block
+  // the queue — anything without a usable deadline counts as due here.
+  const due = candidates.filter((task) => !task.scheduledAt || task.scheduledAt.getTime() <= now);
+
+  // First pass: at most half the tick per site, so every site with queued work
+  // makes progress. Second pass: the remaining slots are filled from anyone,
+  // so a single-site queue still runs the full limit each tick.
+  const perSiteCap = Math.max(1, Math.ceil(limit / 2));
+  const picked: typeof due = [];
+  const pickedIds = new Set<string>();
+  const perSite = new Map<string, number>();
+  for (const task of due) {
+    if (picked.length >= limit) break;
+    const used = perSite.get(task.siteId) ?? 0;
+    if (used >= perSiteCap) continue;
+    perSite.set(task.siteId, used + 1);
+    picked.push(task);
+    pickedIds.add(task.id);
+  }
+  for (const task of due) {
+    if (picked.length >= limit) break;
+    if (pickedIds.has(task.id)) continue;
+    picked.push(task);
+  }
 
   const result: TickResult = { ran: 0, completed: 0, failed: 0, skipped: 0 };
-  for (const task of due) {
+  for (const task of picked) {
     result.ran++;
     const outcome = await runTask(task.id);
     if (outcome.ok) result.completed++;

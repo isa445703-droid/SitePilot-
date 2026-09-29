@@ -62,8 +62,13 @@ export function checkDescription(value: string): TruncationFlag {
 }
 
 /** Deterministic robots.txt for a generated site. */
-export function buildRobots(baseUrl: string): string {
+export function buildRobots(baseUrl: string, options: { indexable?: boolean } = {}): string {
   const origin = baseUrl.replace(/\/$/, "");
+  // A site opted out of indexing gets no crawl budget spent on it — the same
+  // switch the <meta name="robots"> tag honours.
+  if (options.indexable === false) {
+    return ["User-agent: *", "Disallow: /", ""].join("\n");
+  }
   return [
     "User-agent: *",
     "Allow: /",

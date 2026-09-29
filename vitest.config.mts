@@ -6,6 +6,15 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     globals: false,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      // `.tsx` is out of scope: the coverage transform of this toolchain cannot
+      // parse JSX and silently drops every component/page file. The numbers
+      // below therefore describe the server-side logic (`src/**/*.ts`).
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.d.ts"],
+    },
   },
   resolve: {
     alias: {

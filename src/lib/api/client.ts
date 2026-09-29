@@ -78,6 +78,8 @@ export function errorKeyFor(error: unknown): string | null {
         return "errors.forbidden";
       case "RATE_LIMITED":
         return "errors.rateLimited";
+      case "BILLING_NOT_CONFIGURED":
+        return "settings.billingSoon";
       case "AI_NOT_CONFIGURED":
         return "errors.aiNotConfigured";
       case "VALIDATION":

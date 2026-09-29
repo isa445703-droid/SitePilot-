@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import {
   ArrowUpRight,
   CalendarClock,
@@ -32,7 +33,7 @@ export default async function SiteOverviewPage({ params }: Params) {
   const { t, locale } = await getServerI18n();
 
   const overview = await getSiteOverview(siteId, user.id, locale);
-  if (!overview) return null;
+  if (!overview) notFound();
 
   const { site, schedule, stats, lastRun } = overview;
 

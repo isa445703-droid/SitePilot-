@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db/prisma";
 import { withAgentRun, type AgentRunResult } from "./run";
 import { assertPermission } from "./permissions";
+import { PermanentTaskError } from "./task-policy";
 
 export type PublisherAgentInput = {
   siteId: string;
@@ -39,9 +40,13 @@ export async function runPublisherAgent(
     },
     async () => {
       const article = await db.article.findUnique({ where: { id: input.articleId } });
-      if (!article) throw new Error("Article not found");
-      if (article.siteId !== input.siteId) throw new Error("Article does not belong to this site");
-      if (article.status === "ARCHIVED") throw new Error("Archived articles cannot be published");
+      if (!article) throw new PermanentTaskError("Article not found", 404);
+      if (article.siteId !== input.siteId) {
+        throw new PermanentTaskError("Article does not belong to this site", 403);
+      }
+      if (article.status === "ARCHIVED") {
+        throw new PermanentTaskError("Archived articles cannot be published", 409);
+      }
 
       const now = new Date();
       let status: "DRAFT" | "APPROVED" | "PUBLISHED" = "PUBLISHED";
